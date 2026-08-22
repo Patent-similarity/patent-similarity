@@ -1,4 +1,7 @@
 .env
 __pycache__/
-.ipynb_checkpoints/
+.ipynb_checkpoints/ HEAD
 tempCodeRunnerFile.py
+venv/
+datasets/
+ add2464d52bddb9f214467e8119f979140571961
