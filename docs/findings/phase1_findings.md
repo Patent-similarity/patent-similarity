@@ -64,29 +64,20 @@ Schema: patent_id, title, abstract, cpc_subclass, claims_text, claims_status, ab
 Claims completeness: 7,063/10,000 (70.6%) — root-caused via hypothesis elimination to a genuine USPTO bulk-data gap concentrated in 2015–2021 (50–92% missing per year), while 2022–2025 is ~98–100% complete; corpus sampling weighted toward recent years accordingly
 Abstract completeness: 9,755/10,000 (97.55%) — 245 confirmed clean NULLs, no data quality ambiguity
 Independent vs. dependent claims: correctly distinguished via the dependent column (NaN = independent), verified against real claim text, not assumed
-Known limitation (unresolved): subgroup-level CPC stratification not yet implemented — corpus is representative across years but not verified across G06T subtypes
 
+## Decisions Made / Partner Sign-off
 
-##Decision Made 
+1. **Date range narrowing (2011–2026 → 2015–2025):**  
+   **Decision: Agreed together.**  
+   The corpus will use the 2015–2025 date range. The 2011–2014 claims files repeatedly failed to download from the USPTO bulk directory, so we proceeded with 2015–2025 rather than continuing to retry those years.
 
-Keep the current 6 pairs as an initial smoke test, but flag them as weak validation — re-select independently-sourced pairs before final validation if stronger evidence is needed.
-Reason: The 6 pairs were selected by browsing patents already inside the built corpus, not chosen independently beforehand. Their presence in the corpus (6/6) was close to guaranteed, not a real test of retrieval quality.
+2. **Eval pair selection:**  
+   **Decision: Keep the current six pairs as the initial smoke test, but use independently sourced pairs for final validation if stronger evidence is required.**  
+   Phase 2 already documents that the same 8-query-style evaluation should be rerun against the real corpus and **expanded with real eval pairs from Phase 1**. However, the Phase 1 findings also note that the current six pairs were selected from patents already inside the corpus, so their presence was effectively guaranteed. Therefore, they are useful for smoke testing but should not be treated as strong independent retrieval validation.
 
-Missing abstracts (245/10,000)
-
-Answer: Keep them in the corpus with abstract_status = 'missing', and let Phase 2 fall back to title-only embedding for those specific patents in Stage 1.
-Reason: Excluding them shrinks the corpus for no real gain — 245 patents (2.45%) is small, and title-only embedding is a legitimate degraded-but-usable fallback rather than losing the patents entirely.
-
-CPC subgroup stratification (the new one your partner raised)
-
-Answer: Not yet fixed. Pipeline currently stratifies by year only; cpc_group exists in the raw data but isn't used. A fix exists but hasn't been run.
-Reason: This is genuinely unresolved — don't write it as decided.
-
-## Open questions for partner sign-off
-
-1. **Date range narrowing (2011–2026 → 2015–2025):** 2011–2014 claims files repeatedly failed to download from USPTO's bulk directory. Proceeded without them rather than continuing to retry — this was a unilateral call, not a joint decision. Needs explicit sign-off, or a decision to retry those years.
-2. **Eval pair selection order:** see caveat above — needs a decision on whether the current pairs are sufficient or should be replaced with independently-sourced pairs.
-3. **Missing-abstract handling for Phase 2:** exclude the 245 patents with missing abstracts from the corpus entirely, or keep them with the `abstract_status` flag and fall back to title-only embedding for those specific patents in Stage 1 retrieval.
+3. **CPC subgroup stratification:**  
+   **Decision: Use subgroup stratification.**  
+   The final corpus will be stratified by CPC subgroups in addition to year so that coverage is not based on year alone. The existing `cpc_group` information will be incorporated into the sampling process.
 
 ## Final corpus stats
 
