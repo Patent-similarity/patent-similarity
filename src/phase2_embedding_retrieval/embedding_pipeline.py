@@ -13,7 +13,7 @@ dicts (with "abstract" and "claims" fields) is passed in.
 """
 
 import os
-
+import time
 import numpy as np
 import faiss
 from dotenv import load_dotenv
@@ -56,111 +56,82 @@ def get_embedding(client, text):
     )
 
 
-def build_indexes(client, patents):
-    """Build Stage 1 abstract embeddings and Stage 2 claim embeddings.
+def build_indexes(client, patents, delay=0.7):
+    """Build Stage 1 abstract embeddings and FAISS index.
 
-    Patents with missing claims receive no claim embedding.
-    They remain eligible for Stage 1 but are excluded from Stage 2.
+    Claims are no longer embedded here. Claims embedding now happens
+    inside evaluate_query, scoped to that query's top-K Stage 1
+    candidates only — not the whole corpus upfront. This avoids
+    wasting embedding calls on patents that never surface as a
+    Stage 1 candidate for any given query.
+
+    `delay` paces requests to stay under the free-tier RPM limit
+    (100 requests/minute for gemini-embedding-001).
+
+    Args:
+        client: Gemini client from get_client().
+        patents: list of dicts, each with "abstract" and "claims" keys.
+
+    Returns:
+        dict with:
+            "patents": the input list
+            "abstract_embeddings": normalized float32 array
+            "abstract_index": FAISS IndexFlatIP over abstract embeddings
     """
 
-    # ---------------------------------------------------------
-    # Stage 1: embed every patent's abstract
-    # ---------------------------------------------------------
+    abstract_texts = [patent_to_text(p) for p in patents]
 
-    abstract_texts = [
-        patent_to_text(p)
-        for p in patents
-    ]
+    abstract_embeddings = []
+    for text in abstract_texts:
+        abstract_embeddings.append(get_embedding(client, text))
+        time.sleep(delay)
 
-    abstract_embeddings = np.array(
-        [
-            get_embedding(client, text)
-            for text in abstract_texts
-        ],
-        dtype="float32",
-    )
-
-    # Normalize so inner product behaves like cosine similarity.
+    abstract_embeddings = np.array(abstract_embeddings, dtype="float32")
     faiss.normalize_L2(abstract_embeddings)
-
-    # ---------------------------------------------------------
-    # Stage 2: embed claims only when claims are available
-    # ---------------------------------------------------------
-
-    claim_embeddings = []
-
-    for patent in patents:
-
-        if patent["claims"] is None:
-            # No claims = no Stage 2 embedding.
-            # We deliberately do NOT call get_embedding(None).
-            claim_embeddings.append(None)
-
-        else:
-            embedding = get_embedding(
-                client,
-                patent["claims"],
-            )
-
-            embedding = embedding.reshape(1, -1)
-
-            faiss.normalize_L2(embedding)
-
-            claim_embeddings.append(
-                embedding[0]
-            )
-
-    # ---------------------------------------------------------
-    # Build Stage 1 FAISS index
-    # ---------------------------------------------------------
 
     dimension = abstract_embeddings.shape[1]
 
     abstract_index = faiss.IndexFlatIP(dimension)
-
-    abstract_index.add(
-        abstract_embeddings
-    )
+    abstract_index.add(abstract_embeddings)
 
     return {
         "patents": patents,
         "abstract_embeddings": abstract_embeddings,
-        "claim_embeddings": claim_embeddings,
         "abstract_index": abstract_index,
     }
 
 
-def evaluate_query(client, index_data, query_text):
+def evaluate_query(client, index_data, query_text, top_k=50, delay=0.7):
     """Run one query through Stage 1 and Stage 2.
 
     Stage 1:
-        All patents are ranked using abstract similarity.
+        Every patent is ranked by abstract similarity. Only the
+        top_k best are kept — this is the capped list the caller
+        uses for the Stage-1-only "lighter treatment" tier.
 
     Stage 2:
-        Only patents with claims are reranked using the
-        weighted abstract + claims score.
+        From that same top_k, patents with claims=None are dropped.
+        Claims are embedded only for the survivors, on the fly, then
+        reranked by the weighted abstract+claims score. This is the
+        only place claims ever get embedded — never for the whole
+        corpus, never for candidates outside the top_k.
 
-    Claims-missing patents remain in Stage 1 but are excluded
-    from Stage 2.
+    Claims-missing candidates never enter Stage 2, and Stage 2 is
+    never backfilled from Stage 1 to hit any particular count.
     """
+
+    patents = index_data["patents"]
 
     # ---------------------------------------------------------
     # Embed and normalize the query
     # ---------------------------------------------------------
 
-    query_embedding = get_embedding(
-        client,
-        query_text,
-    ).reshape(1, -1)
-
-    faiss.normalize_L2(
-        query_embedding
-    )
-
+    query_embedding = get_embedding(client, query_text).reshape(1, -1)
+    faiss.normalize_L2(query_embedding)
     query_vector = query_embedding[0]
 
     # ---------------------------------------------------------
-    # Stage 1: abstract-only ranking
+    # Stage 1: abstract-only ranking, capped at top_k
     # ---------------------------------------------------------
 
     abstract_scores = np.dot(
@@ -168,54 +139,38 @@ def evaluate_query(client, index_data, query_text):
         query_vector,
     )
 
-    stage1_indices = np.argsort(
-        abstract_scores
-    )[::-1]
+    stage1_indices = np.argsort(abstract_scores)[::-1][:top_k]
 
     # ---------------------------------------------------------
-    # Stage 2: claims reranking
+    # Stage 2: claims reranking, scoped to top_k survivors only
     # ---------------------------------------------------------
 
-    # Only patents with claims embeddings are eligible.
-    stage2_indices = [
-        idx
-        for idx, embedding in enumerate(
-            index_data["claim_embeddings"]
-        )
-        if embedding is not None
+    # Only patents in the top_k AND with claims available are eligible.
+    stage2_candidates = [
+        idx for idx in stage1_indices
+        if patents[idx]["claims"] is not None
     ]
 
-    # Missing-claims patents get NaN because they have
-    # no Stage 2 score.
-    claim_scores = np.full(
-        len(index_data["patents"]),
-        np.nan,
-        dtype="float32",
-    )
+    claim_scores = np.full(len(patents), np.nan, dtype="float32")
+    final_scores = np.full(len(patents), np.nan, dtype="float32")
 
-    final_scores = np.full(
-        len(index_data["patents"]),
-        np.nan,
-        dtype="float32",
-    )
+    for idx in stage2_candidates:
+        claim_embedding = get_embedding(client, patents[idx]["claims"])
+        time.sleep(delay)
 
-    # Calculate Stage 2 scores only for eligible patents.
-    for idx in stage2_indices:
+        claim_embedding = claim_embedding.reshape(1, -1)
+        faiss.normalize_L2(claim_embedding)
 
-        claim_scores[idx] = np.dot(
-            index_data["claim_embeddings"][idx],
-            query_vector,
-        )
+        claim_scores[idx] = np.dot(claim_embedding[0], query_vector)
 
         final_scores[idx] = (
-            ABSTRACT_WEIGHT * abstract_scores[idx]
-            + CLAIM_WEIGHT * claim_scores[idx]
+        ABSTRACT_WEIGHT * abstract_scores[idx]
+        + CLAIM_WEIGHT * claim_scores[idx]
         )
 
-    # Sort only the Stage 2-eligible patents.
     stage2_indices = np.array(
         sorted(
-            stage2_indices,
+            stage2_candidates,
             key=lambda idx: final_scores[idx],
             reverse=True,
         )
