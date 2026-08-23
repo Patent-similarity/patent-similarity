@@ -86,6 +86,50 @@ no calibrated threshold yet — see limitations below.
   case (skip rerank and fall back to abstract-only score, most likely)
   before this runs on the real corpus.
 
+## Addendum — missing-claims exclusion validated
+
+Before adapting the pipeline to the real corpus, the missing-claims
+policy from the limitations section above was implemented and tested:
+patents with `claims: None` are now excluded from Stage 2 entirely
+(never embedded, never scored, never reranked) while remaining fully
+eligible for the Stage 1 abstract-only ranking. A new
+`select_full_treatment(stage2_indices, max_results=5)` function selects
+up to 5 Stage-2-eligible candidates for full synthesis, with **no
+backfilling** from Stage-1-only candidates if fewer than 5 are eligible.
+
+**Toy corpus expanded from 5 to 8 patents** to test this: the original
+5 plus 3 synthetic claims-missing patents (medical-imaging themed,
+deliberately overlapping P002's abstract to create realistic
+competition, not easy-to-spot noise).
+
+**Regression check:** the original 8-query locked eval set was rerun
+against the expanded corpus. All results held — Q1–Q5 still retrieve
+their expected patent at rank 1 in both stages; Q6's ambiguity test
+still shows the claims-rerank margin widening from 0.0644 to 0.1307
+between P003 and P005; Q7's no-match scores remain flat and low
+relative to genuine matches; Q8's reinforcement (0.8060 → 0.9240)
+is unchanged. Adding claims-missing patents did not interfere with
+any previously-validated behavior.
+
+**Cap behavior verified at two eligibility counts:** with 5 eligible
+candidates, `select_full_treatment` returns all 5. With one additional
+patent's claims temporarily set to `None` (4 eligible), it returns
+exactly 4 — confirming the no-backfill rule holds rather than silently
+padding to 5 from Stage-1-only candidates.
+
+**New observation — claims-missing patents can crowd out eligible ones
+in Stage 1.** In several queries (Q2, Q3, Q7, Q8), the synthetic
+claims-missing patents ranked *above* real, claims-eligible patents in
+the abstract-only Stage 1 view. This wasn't designed to happen — it's
+a byproduct of writing realistic missing-claims patents — but it's a
+useful early signal: with the real corpus's ~29% claims-missing rate,
+Stage 1's top-50 will likely include a non-trivial share of
+claims-ineligible candidates, meaning the number of Stage-2-eligible
+candidates per query could sometimes land well below 5. The no-backfill
+policy above is designed for exactly this case, and this is toy-scale
+evidence that it's a realistic scenario, not just a hypothetical edge
+case.
+
 ## Next steps
 
 - Adapt the data-loading step to read from the real `patents.db` schema,

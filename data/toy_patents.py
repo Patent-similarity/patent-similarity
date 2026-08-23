@@ -1,14 +1,14 @@
 """
 Toy patent corpus for Phase 2 pipeline validation.
 
-These 5 hand-written patents were created to test the two-stage
+These 7 hand-written patents were created to test the two-stage
 retrieval pipeline (abstract embedding -> FAISS -> claims rerank)
 before the real Phase 1 G06T corpus is available. Once the real
 corpus lands, this module is replaced by a loader over real data;
 the pipeline code in src/embedding_pipeline.py does not change.
 """
 
-TOY_PATENTS = [
+TOY_PATENTS =[
     {
         "id": "P001",
         "title": "Image Classification Using Convolutional Neural Networks",
@@ -60,11 +60,7 @@ TOY_PATENTS = [
             "documents using transformer based neural networks and natural "
             "language processing techniques."
         ),
-        "claims": (
-            "A method comprising receiving a text document, processing the "
-            "document using a transformer neural network, identifying "
-            "important sentences, and generating a summary."
-        ),
+        "claims": None ,
     },
     {
         "id": "P005",
@@ -79,5 +75,27 @@ TOY_PATENTS = [
             "facial features using a neural network, comparing the "
             "features with stored identities, and controlling access."
         ),
+    },
+        {
+        "id": "TOY-MISSING-CLAIMS-01",
+        "title": "Medical Image Segmentation System",
+        "abstract": (
+            "A computer vision system processes medical images "
+            "to segment anatomical structures and identify regions "
+            "of abnormal tissue."
+        ),
+        "claims": None,
+    },
+    {
+        "id": "TOY-MISSING-CLAIMS-02",
+        "title": "Neural Network System for Detecting Tumors",
+        "abstract":( "A computer-implemented system uses a neural network to analyze medical images and identify tumors."),
+        "claims": None,
+    },
+    {
+        "id": "TOY-MISSING-CLAIMS-03",
+        "title": "Image Processing System for Medical Diagnosis",
+        "abstract":("An image processing system analyzes medical images to identify abnormal tissue."),
+        "claims": None,
     },
 ]
