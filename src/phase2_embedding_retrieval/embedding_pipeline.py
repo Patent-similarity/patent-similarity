@@ -56,43 +56,234 @@ def get_embedding(client, text):
     )
 
 
-def build_indexes(client, patents, delay=0.7):
-    """Build Stage 1 abstract embeddings and FAISS index.
+def build_indexes(
+    client,
+    patents,
+    batch_size=50,
+    delay=31.0,
+    max_retries=5,
+):
+    """Build Stage 1 abstract embeddings and FAISS index using batches.
 
-    Claims are no longer embedded here. Claims embedding now happens
-    inside evaluate_query, scoped to that query's top-K Stage 1
-    candidates only — not the whole corpus upfront. This avoids
-    wasting embedding calls on patents that never surface as a
-    Stage 1 candidate for any given query.
+    Important:
+    Although multiple texts can be sent in one embed_content call,
+    the embedding quota may count each text toward the RPM limit.
 
-    `delay` paces requests to stay under the free-tier RPM limit
-    (100 requests/minute for gemini-embedding-001).
+    With a 100 RPM quota, a conservative strategy is:
+        - 50 embeddings per batch
+        - approximately 31 seconds between batches
+
+    This keeps the embedding workload below the per-minute limit while
+    still reducing Python/API overhead through batched requests.
 
     Args:
         client: Gemini client from get_client().
-        patents: list of dicts, each with "abstract" and "claims" keys.
+        patents: List of patent dictionaries.
+        batch_size: Number of abstracts per embedding batch.
+        delay: Seconds to wait between successful batches.
+        max_retries: Maximum retries for a failed batch.
 
     Returns:
-        dict with:
-            "patents": the input list
-            "abstract_embeddings": normalized float32 array
-            "abstract_index": FAISS IndexFlatIP over abstract embeddings
+        dict containing:
+            patents
+            abstract_embeddings
+            abstract_index
     """
 
-    abstract_texts = [patent_to_text(p) for p in patents]
-
     abstract_embeddings = []
-    for text in abstract_texts:
-        abstract_embeddings.append(get_embedding(client, text))
-        time.sleep(delay)
 
-    abstract_embeddings = np.array(abstract_embeddings, dtype="float32")
-    faiss.normalize_L2(abstract_embeddings)
+    total_patents = len(patents)
+
+    for start in range(0, total_patents, batch_size):
+
+        end = min(start + batch_size, total_patents)
+
+        batch = patents[start:end]
+
+        batch_texts = [
+            patent_to_text(patent)
+            for patent in batch
+        ]
+
+        batch_number = start // batch_size + 1
+
+        print()
+        print(
+            f"Embedding batch {batch_number}: "
+            f"patents {start + 1}-{end} of {total_patents}"
+        )
+
+        # ---------------------------------------------
+        # Embed batch with retry / backoff
+        # ---------------------------------------------
+
+        success = False
+
+        for attempt in range(max_retries + 1):
+
+            try:
+                response = client.models.embed_content(
+                    model="gemini-embedding-001",
+                    contents=batch_texts,
+                )
+
+                batch_embeddings = [
+                    np.array(
+                        embedding.values,
+                        dtype="float32",
+                    )
+                    for embedding in response.embeddings
+                ]
+
+                # -------------------------------------
+                # Safety check: one embedding per input
+                # -------------------------------------
+
+                if len(batch_embeddings) != len(batch):
+
+                    raise ValueError(
+                        f"Embedding count mismatch: "
+                        f"expected {len(batch)}, "
+                        f"got {len(batch_embeddings)}."
+                    )
+
+                # Preserve verified input order.
+                abstract_embeddings.extend(
+                    batch_embeddings
+                )
+
+                print(
+                    f"Completed batch {batch_number} "
+                    f"({len(batch_embeddings)} embeddings)"
+                )
+
+                success = True
+
+                break
+
+            except Exception as error:
+
+                if attempt == max_retries:
+
+                    raise RuntimeError(
+                        f"Failed to embed patents "
+                        f"{start + 1}-{end} "
+                        f"after {max_retries} retries."
+                    ) from error
+
+                # Exponential backoff.
+                backoff = min(
+                    2 ** attempt,
+                    60,
+                )
+
+                print(
+                    f"Batch {batch_number} failed:"
+                )
+
+                print(error)
+
+                print(
+                    f"Retrying in {backoff} seconds..."
+                )
+
+                time.sleep(backoff)
+
+        if not success:
+
+            raise RuntimeError(
+                f"Batch {batch_number} did not complete."
+            )
+
+        # ---------------------------------------------
+        # Inter-batch pacing
+        # ---------------------------------------------
+
+        if end < total_patents:
+
+            print(
+                f"Waiting {delay} seconds "
+                f"before the next batch..."
+            )
+
+            time.sleep(delay)
+
+    # ---------------------------------------------
+    # Convert list to NumPy array
+    # ---------------------------------------------
+
+    abstract_embeddings = np.array(
+        abstract_embeddings,
+        dtype="float32",
+    )
+
+    # ---------------------------------------------
+    # Final embedding count check
+    # ---------------------------------------------
+
+    if len(abstract_embeddings) != len(patents):
+
+        raise ValueError(
+            f"Final embedding count mismatch: "
+            f"{len(abstract_embeddings)} embeddings "
+            f"for {len(patents)} patents."
+        )
+
+    # ---------------------------------------------
+    # Normalize for cosine similarity
+    # ---------------------------------------------
+
+    faiss.normalize_L2(
+        abstract_embeddings
+    )
+
+    # ---------------------------------------------
+    # Build FAISS IndexFlatIP
+    # ---------------------------------------------
 
     dimension = abstract_embeddings.shape[1]
 
-    abstract_index = faiss.IndexFlatIP(dimension)
-    abstract_index.add(abstract_embeddings)
+    abstract_index = faiss.IndexFlatIP(
+        dimension
+    )
+
+    abstract_index.add(
+        abstract_embeddings
+    )
+
+    # ---------------------------------------------
+    # Final FAISS consistency check
+    # ---------------------------------------------
+
+    if abstract_index.ntotal != len(patents):
+
+        raise ValueError(
+            f"FAISS index mismatch: "
+            f"{abstract_index.ntotal} vectors "
+            f"for {len(patents)} patents."
+        )
+
+    print()
+    print("=" * 50)
+    print("INDEX BUILD COMPLETE")
+    print("=" * 50)
+
+    print(f"Patents:       {len(patents)}")
+
+    print(
+        f"Embeddings:    "
+        f"{len(abstract_embeddings)}"
+    )
+
+    print(
+        f"FAISS vectors: "
+        f"{abstract_index.ntotal}"
+    )
+
+    print(
+        f"Vector dimension: "
+        f"{dimension}"
+    )
 
     return {
         "patents": patents,
