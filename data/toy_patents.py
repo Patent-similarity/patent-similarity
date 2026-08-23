@@ -53,14 +53,18 @@ TOY_PATENTS =[
         ),
     },
     {
-        "id": "P004",
-        "title": "Natural Language Document Summarization",
-        "abstract": (
-            "A system for automatically generating summaries of textual "
-            "documents using transformer based neural networks and natural "
-            "language processing techniques."
-        ),
-        "claims": None ,
+    "id": "P004",
+    "title": "Natural Language Document Summarization",
+    "abstract": (
+        "A system for automatically generating summaries of textual "
+        "documents using transformer based neural networks and natural "
+        "language processing techniques."
+    ),
+    "claims": (
+        "A method comprising receiving a text document, processing the "
+        "document using a transformer neural network, identifying "
+        "important sentences, and generating a summary."
+    ),
     },
     {
         "id": "P005",
@@ -76,7 +80,7 @@ TOY_PATENTS =[
             "features with stored identities, and controlling access."
         ),
     },
-        {
+    {
         "id": "TOY-MISSING-CLAIMS-01",
         "title": "Medical Image Segmentation System",
         "abstract": (
