@@ -1,16 +1,22 @@
 """
 Phase 1 Pipeline — Build G06T patent corpus into SQLite.
+Stratified by (year, cpc_group) so the corpus is representative both
+across time and across G06T subgroups (e.g. object tracking, image
+enhancement, 3D rendering), not just across years.
 
-Steps (matches the reasoning we worked through together):
+Steps:
 1. Load g_patent.tsv, filter to date range.
-2. Load g_cpc_current.tsv, filter to cpc_subclass == "G06T", dedupe by patent_id.
-3. Join patent + cpc (inner join -> only G06T patents survive).
-4. Load g_patent_abstract.tsv, join in abstract text.
-5. Cap corpus size (~1000 patents) for MVP scope.
-6. For each year's claims file, filter to patents in our corpus + independent claims only
-   (dependent.isna()), concatenate multiple independent claims per patent into one string.
-7. Track claims_status per patent: 'found' or 'missing' (idempotency/failure-tracking design).
-8. Save everything into SQLite with patent_id as PRIMARY KEY.
+2. Load g_cpc_current.tsv, filter to cpc_subclass == "G06T", dedupe by
+   patent_id, keep cpc_group (subgroup-level code).
+3. Join patent + cpc.
+4. Join in abstract text.
+5. Stratified sampling by (year, cpc_group) toward CORPUS_CAP total.
+   Uses a combined string key for grouping instead of a multi-column
+   groupby, to avoid a pandas 3.x quirk where groupby(["a","b"]).apply()
+   can drop the grouping columns from the result.
+6. Load claims year by year, keep independent claims only, attach to corpus.
+7. Track claims_status per patent: 'found' or 'missing'.
+8. Save to SQLite, patent_id as PRIMARY KEY.
 """
 
 import pandas as pd
@@ -20,12 +26,12 @@ import os
 DATASETS_DIR = "datasets"
 DB_PATH = "patents.db"
 
-# ---- CONFIG: adjust these based on what you actually have downloaded ----
 START_DATE = "2015-01-01"
 END_DATE = "2025-12-31"
-TARGET_CPC_SUBCLASSES = ["G06T"]  # locked Phase 0 spec -- G06T only
-CORPUS_CAP = 1000
-CLAIMS_YEARS = list(range(2015, 2026))  # matches your downloaded years
+TARGET_CPC_SUBCLASSES = ["G06T"]
+CORPUS_CAP = 10000
+CLAIMS_YEARS = list(range(2015, 2026))
+RECENT_YEARS = {"2022", "2023", "2024", "2025"}
 
 # ---------------------------------------------------------------------
 # STEP 1: Load main patent records, filter by date
@@ -42,102 +48,91 @@ patents = patents[
 print(f"  Patents in date range: {len(patents)}")
 
 # ---------------------------------------------------------------------
-# STEP 2: Load CPC file, filter to G06T, dedupe (per our earlier reasoning)
+# STEP 2: Load CPC file, filter to G06T, keep cpc_group
 # ---------------------------------------------------------------------
 print("Step 2: Loading g_cpc_current.tsv ...")
 cpc = pd.read_csv(
     os.path.join(DATASETS_DIR, "g_cpc_current.tsv"),
     sep="\t",
-    usecols=["patent_id", "cpc_subclass"]
+    usecols=["patent_id", "cpc_subclass", "cpc_group"]
 )
 g06_target = cpc[cpc["cpc_subclass"].isin(TARGET_CPC_SUBCLASSES)]
-# A patent could technically have codes in both classes -- keep first match,
-# so each patent is counted once, under one class, not double-counted.
 g06_target = g06_target.drop_duplicates(subset="patent_id")
-print(f"  Unique G06T+G06N patents (any date): {len(g06_target)}")
-print(g06_target["cpc_subclass"].value_counts())
+print(f"  Unique G06T patents (any date): {len(g06_target)}")
+print(f"  Unique cpc_group values found: {g06_target['cpc_group'].nunique()}")
 
 # ---------------------------------------------------------------------
-# STEP 3: Join patent + cpc -> only G06T patents in our date range survive
+# STEP 3: Join patent + cpc
 # ---------------------------------------------------------------------
 print("Step 3: Joining patent + CPC ...")
-corpus = patents.merge(g06_target[["patent_id", "cpc_subclass"]], on="patent_id", how="inner")
-print(f"  G06T+G06N patents in date range: {len(corpus)}")
+corpus = patents.merge(
+    g06_target[["patent_id", "cpc_subclass", "cpc_group"]], on="patent_id", how="inner"
+)
+print(f"  G06T patents in date range: {len(corpus)}")
 
 # ---------------------------------------------------------------------
 # STEP 4: Bring in abstract text
 # ---------------------------------------------------------------------
 print("Step 4: Loading g_patent_abstract.tsv ...")
-abstracts = pd.read_csv(
-    os.path.join(DATASETS_DIR, "g_patent_abstract.tsv"),
-    sep="\t"
-)
+abstracts = pd.read_csv(os.path.join(DATASETS_DIR, "g_patent_abstract.tsv"), sep="\t")
 corpus = corpus.merge(abstracts, on="patent_id", how="left")
-missing_abstract = corpus["patent_abstract"].isna().sum()
-print(f"  Patents missing abstract: {missing_abstract}")
+print(f"  Patents missing abstract: {corpus['patent_abstract'].isna().sum()}")
 
 # ---------------------------------------------------------------------
-# STEP 5: Weighted stratified sampling toward ~5000 total.
-# Recent years (2022-2025) get more weight -- we confirmed via
-# check_missing.py that claims coverage there is ~98-100% complete.
-# Older years (2015-2021) get less weight since 50-92% of claims are
-# missing there -- still included, for date-range coverage, just fewer.
+# STEP 5: Stratified sampling by (year, cpc_group), using a combined
+# key column instead of multi-column groupby to sidestep the pandas
+# column-dropping issue.
 # ---------------------------------------------------------------------
 corpus["year"] = corpus["patent_date"].str[:4]
+corpus["_strata_key"] = corpus["year"] + "|" + corpus["cpc_group"].astype(str)
 
-# ---------------------------------------------------------------------
-# STEP 5: Weighted sampling toward 10,000 total (confirmed with partner
-# based on Gemini quota + FAISS latency, not guessed). G06T only.
-# Recent years (2022-2025) weighted higher -- claims coverage there is
-# ~98-100% complete, vs 50-92% missing for 2015-2021 (verified earlier).
-# ---------------------------------------------------------------------
-corpus["year"] = corpus["patent_date"].str[:4]
+num_groups = corpus["cpc_group"].nunique()
+num_years = corpus["year"].nunique()
+print(f"Step 5: Stratifying across {num_groups} cpc_group values x {num_years} years")
 
-RECENT_YEARS = {"2022", "2023", "2024", "2025"}
-RECENT_PER_YEAR = 1450   # 4 years x 1450 = 5800
-OLDER_PER_YEAR = 600     # 7 years x 600 = 4200  (total = 10,000)
+total_cells_recent = len(RECENT_YEARS) * num_groups
+total_cells_older = (num_years - len(RECENT_YEARS)) * num_groups
+recent_weight, older_weight = 2.4, 1.0
+denom = (total_cells_recent * recent_weight) + (total_cells_older * older_weight)
+recent_per_cell = max(1, round((CORPUS_CAP * recent_weight) / denom))
+older_per_cell = max(1, round((CORPUS_CAP * older_weight) / denom))
+print(f"  Target per (year, cpc_group) cell: recent={recent_per_cell}, older={older_per_cell}")
 
-def sample_year_group(group):
-    year = group.name
-    target = RECENT_PER_YEAR if year in RECENT_YEARS else OLDER_PER_YEAR
+def sample_group(group):
+    year = group["year"].iloc[0]
+    target = recent_per_cell if year in RECENT_YEARS else older_per_cell
     n = min(target, len(group))
     return group.sample(n=n, random_state=42)
 
-corpus = corpus.groupby("year", group_keys=False).apply(sample_year_group)
-corpus = corpus.drop(columns=["year"], errors="ignore")
-print(f"Step 5: Corpus size after weighted sampling: {len(corpus)}")
+# groupby on the single combined key column -- this one survives .apply()
+sampled_parts = [sample_group(g) for _, g in corpus.groupby("_strata_key")]
+corpus = pd.concat(sampled_parts, ignore_index=True)
+corpus = corpus.drop(columns=["_strata_key", "year"], errors="ignore")
+
+print(f"Step 5: Corpus size after stratified sampling: {len(corpus)}")
+print("  Subgroup distribution in final corpus (top 20):")
+print(corpus["cpc_group"].value_counts().head(20))
 
 corpus_ids = set(corpus["patent_id"])
 
 # ---------------------------------------------------------------------
-# STEP 6: Load claims year by year, filter to our corpus + independent claims only
+# STEP 6: Load claims year by year, independent claims only
 # ---------------------------------------------------------------------
 print("Step 6: Loading claims files ...")
-claims_by_patent = {}  # patent_id -> list of independent claim texts
-
+claims_by_patent = {}
 for year in CLAIMS_YEARS:
     fname = os.path.join(DATASETS_DIR, f"g_claims_{year}.tsv")
     if not os.path.exists(fname):
         print(f"  [SKIP] {fname} not found on disk")
         continue
-
     print(f"  Reading {fname} ...")
-    yearly = pd.read_csv(
-        fname, sep="\t",
-        usecols=["patent_id", "claim_text", "dependent"]
-    )
-
-    # keep only claims belonging to patents in our corpus (saves memory)
+    yearly = pd.read_csv(fname, sep="\t", usecols=["patent_id", "claim_text", "dependent"])
     yearly = yearly[yearly["patent_id"].isin(corpus_ids)]
-
-    # independent claims only -> dependent is NaN (verified earlier against real text)
     yearly = yearly[yearly["dependent"].isna()]
-
     for pid, group in yearly.groupby("patent_id"):
         text = " ".join(group["claim_text"].astype(str).tolist())
         claims_by_patent.setdefault(pid, []).append(text)
 
-# collapse to one string per patent, track status
 def get_claims_and_status(pid):
     texts = claims_by_patent.get(pid)
     if texts:
@@ -147,20 +142,20 @@ def get_claims_and_status(pid):
 claims_col = corpus["patent_id"].apply(get_claims_and_status)
 corpus["claims_text"] = claims_col.apply(lambda x: x[0])
 corpus["claims_status"] = claims_col.apply(lambda x: x[1])
-
 found = (corpus["claims_status"] == "found").sum()
 missing = (corpus["claims_status"] == "missing").sum()
 print(f"  Claims found: {found} | Claims missing: {missing}")
 
 # ---------------------------------------------------------------------
-# STEP 7: Save to SQLite
+# STEP 7: Save to SQLite, cpc_group included
 # ---------------------------------------------------------------------
 print(f"Step 7: Writing to {DB_PATH} ...")
 corpus_final = corpus.rename(columns={
     "patent_title": "title",
     "patent_date": "filing_date",
     "patent_abstract": "abstract",
-})[["patent_id", "title", "abstract", "cpc_subclass", "claims_text", "claims_status", "filing_date"]]
+})[["patent_id", "title", "abstract", "cpc_subclass", "cpc_group",
+    "claims_text", "claims_status", "filing_date"]]
 
 conn = sqlite3.connect(DB_PATH)
 corpus_final.to_sql("patents", conn, if_exists="replace", index=False,
@@ -171,10 +166,8 @@ print("Done. Corpus saved.")
 print(f"Total patents: {len(corpus_final)}")
 print(f"With claims: {found} | Missing claims: {missing}")
 
-# ---- Additional diagnostics for partner's cap calculation ----
 corpus_final["claims_len_chars"] = corpus_final["claims_text"].fillna("").str.len()
-print("\n--- Claims text length stats (characters, 'found' rows only) ---")
+print("\n--- Claims text length stats (found rows only) ---")
 print(corpus_final[corpus_final["claims_status"] == "found"]["claims_len_chars"].describe())
-
 print("\n--- Missing abstract count ---")
 print((corpus_final["abstract"].isna()).sum())

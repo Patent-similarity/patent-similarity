@@ -1,74 +1,119 @@
-# Phase 1 Findings — Data Pipeline
 
-## Spec (locked)
+---
 
-- **Input format:** free text (user-submitted invention description)
-- **Similarity target:** dual-vector — abstract embedding (30% weight) + independent-claims embedding (70% weight), fused via weighted average
-- **Corpus scope:** CPC subclass **G06T** (image data processing / computer vision), filed **2015–2025**, target size **10,000 patents**
-- **Success criteria:** top-5 ranked results with synthesized explanation, validated against known-similar/known-dissimilar patent pairs plus manual inspection
+## 6. Issues found and resolved
 
-## Data source
+### 6.1 PatentsView API inaccessible (ID.me verification wall)
 
-USPTO Bulk Data Directory (`data.uspto.gov`) — the PatentsView API was attempted first but blocked by USPTO's ID.me identity verification requirement (introduced as part of PatentsView's migration to the Open Data Portal). Pivoted to direct bulk TSV downloads instead.
+**Symptom:** API key request page redirected to ID.me identity verification, introduced as part of USPTO's migration to the Open Data Portal (legacy PatentsView developer hub decommissioned).
 
-Files used, product `PVGPATDIS` (bibliographic) + `PVGPATTXT` (long text):
-- `g_patent.tsv` — patent_id, patent_date, patent_title
-- `g_patent_abstract.tsv` — patent_id, patent_abstract
-- `g_cpc_current.tsv` — patent_id, cpc_subclass (filtered to G06T)
-- `g_claims_2015.tsv` through `g_claims_2025.tsv` — patent_id, claim_text, dependent (11 yearly files)
+**Investigation:** Confirmed via USPTO's own transition-guide documentation that the legacy API was fully retired and ODP access now requires a verified USPTO.gov account with ID.me linkage - a multi-step process with unpredictable turnaround.
 
-## Pipeline (`src/phase1_data_pipeline/build_corpus.py`)
+**Resolution:** Pivoted to the Bulk Data Directory, which provides the same underlying data (and, as it turned out, a cleaner join structure - bibliographic and long-text data as separate flat files rather than paginated API responses) with no authentication barrier.
 
-1. Load `g_patent.tsv`, filter to filing date 2015–2025
-2. Load `g_cpc_current.tsv`, filter to `cpc_subclass == "G06T"`, deduplicate by `patent_id` (a patent can have multiple G06T-prefixed CPC codes; we keep first-occurrence as a membership flag only, not the full code list)
-3. Inner join patent + CPC → G06T-only corpus in date range
-4. Join in abstract text from `g_patent_abstract.tsv`
-5. Weighted sampling to reach target corpus size — years 2022–2025 weighted higher than 2015–2021 (see data quality section below for why)
-6. For each yearly claims file, filter to patents in our corpus and to **independent claims only** (`dependent` column is null — verified against real claim text, see below)
-7. Concatenate independent claims per patent into one field; track `claims_status` (`found`/`missing`) per patent
-8. Save to SQLite (`patents.db`), schema: `patent_id, title, abstract, claims_text, claims_status, abstract_status, filing_date`
+**Impact:** No data loss; access method changed, not data availability.
 
-## Data quality investigation
+---
 
-### Independent vs. dependent claims
+### 6.2 Independent vs. dependent claim misclassification risk
 
-The `dependent` column in the claims files is not boolean — it holds the parent claim label (e.g. `"claim 1"`) for dependent claims, and is `NaN` for independent claims. Verified by inspecting real claim text: rows with `dependent = NaN` were standalone claims; rows with `dependent = "claim 1"` explicitly referenced claim 1 in their text (e.g. *"The computer system of claim 1, wherein..."*). Confirmed via `src/phase1_data_pipeline/verify_claims_polarity.py`.
+**Symptom:** The `dependent` column's semantics were not self-evident from the column name or a first look at its values (a mix of null and strings like `"claim 1"`).
 
-### Claims completeness gap (2015–2021)
+**Investigation:** Rather than assume a polarity, sample claim text was pulled for both cases:
+- `dependent = null` -> text began *"1. A computer system comprising..."* - a standalone claim.
+- `dependent = "claim 1"` -> text began *"2. The computer system of claim 1, wherein..."* - explicitly referencing a parent claim.
 
-Initial corpus build showed 43% of patents missing claims text overall. Investigation (documented via hypothesis elimination, not assumption):
-1. Ruled out missing claims files — all 11 years (2015–2025) confirmed present
-2. Ruled out `patent_id` dtype mismatch between files — both `int64`
-3. Ruled out filter logic on the `dependent` column — polarity verified correct
-4. Confirmed via cross-year search — a sample "missing" patent was checked against all 11 years' claims files and found in none
+**Resolution:** Confirmed `dependent.isna()` correctly identifies independent claims. This filter is what feeds the `claims_text` field used for the 70%-weighted claims embedding - an incorrect polarity here would have silently fed dependent (narrower, less representative) claims into every patent's similarity vector.
 
-**Conclusion:** genuine gap in USPTO's bulk long-text dataset for older grants, not a pipeline bug. Missingness is heavily concentrated: 2015–2021 ranges from ~50% to ~92% missing per year (worst in 2020–2021), while 2022–2025 is ~98–100% complete. This is why the corpus sampling weights recent years more heavily — final corpus claims completeness after weighting: **7,063/10,000 (70.6%) found**.
+**Impact:** Verified correct before use; no rework required, but this was treated as a hard gate - the pipeline was not run against real claims data until this was confirmed with evidence, not assumption.
 
-### Missing abstracts
+---
 
-245/10,000 patents (2.45%) have no abstract text. Confirmed via `verify_abstract_nulls.py` that all cases are clean `NULL` values (0 empty strings, 0 whitespace-only) — no mixed data-quality issue. Added `abstract_status` column (`found`/`missing`) via `add_abstract.py`, matching the `claims_status` pattern. Consistency between the status flag and actual data verified via `verify_abstract_status_consistency.py`: 0 mismatches.
+### 6.3 Claims completeness gap, concentrated in 2015-2021
 
-## Evaluation pairs
+**Symptom:** An early full-corpus run showed ~43% of patents missing claims text overall - high enough to investigate rather than accept.
 
-6 patent IDs selected as known-similar/known-dissimilar pairs for retrieval validation:
+**Investigation (hypothesis elimination, in order):**
+1. *Are claims files missing entirely for some years?* - No; all 11 yearly files (2015-2025) confirmed present on disk.
+2. *Is there a `patent_id` dtype mismatch between files causing silent join failures?* - No; confirmed both `g_patent.tsv` and yearly claims files use consistent typing for `patent_id`.
+3. *Is the independent/dependent filter excluding valid rows due to a formatting quirk in older files (e.g. empty string vs. true null)?* - No; a specific "missing" patent was checked and had zero rows in its expected year's claims file at all - not a filter miss.
+4. *Is the patent's claims data misfiled under a different year than its patent_date implies?* - No; the patent was searched across all 11 years' claims files and found in none.
 
-- **Similar pair 1:** `8929608` (3D position/orientation recognition) vs. `8933993` (pose determination for mobile device)
-- **Similar pair 2:** `8937592` (3D content rendering on handheld device) vs. `8938093` (3D graphics + face-tracking interaction)
-- **Dissimilar pair:** `8929636` (graph-based image segmentation) vs. `8930846` (app repositioning/UI management — only nominally G06T)
+**Conclusion:** A genuine gap in USPTO's bulk long-text dataset for older grants, not a pipeline defect. Missingness by year (sample check): 2015-2021 ranged from ~50% to ~92% missing (worst in 2020-2021); 2022-2025 was ~98-100% complete.
 
-**Important caveat:** these pairs were selected by browsing patents *already inside* the built 10,000-patent corpus, not chosen independently beforehand and then checked for presence. All 6 were confirmed present (6/6), but this was close to guaranteed by construction — it is not strong evidence that the retrieval system can find genuinely known-similar patents from an independent source. If a stronger validation signal is needed, eval pairs should be re-selected from an external source, prior to and independent of corpus inspection.
+**Resolution:** Corpus sampling weights recent years (2022-2025) more heavily than older years, since claims data is reliably present there. `claims_status` flag preserves the distinction rather than silently dropping incomplete records - final corpus: **4,479/6,980 (64.2%) claims found**, with the gap fully explained rather than papered over.
 
-## Open questions for partner sign-off
+---
 
-1. **Date range narrowing (2011–2026 → 2015–2025):** 2011–2014 claims files repeatedly failed to download from USPTO's bulk directory. Proceeded without them rather than continuing to retry — this was a unilateral call, not a joint decision. Needs explicit sign-off, or a decision to retry those years.
-2. **Eval pair selection order:** see caveat above — needs a decision on whether the current pairs are sufficient or should be replaced with independently-sourced pairs.
-3. **Missing-abstract handling for Phase 2:** exclude the 245 patents with missing abstracts from the corpus entirely, or keep them with the `abstract_status` flag and fall back to title-only embedding for those specific patents in Stage 1 retrieval.
+### 6.4 Missing abstracts
 
-## Final corpus stats
+**Symptom:** 201/6,980 patents (2.88%) had no abstract text.
 
-- Total patents: 10,000
-- CPC scope: G06T only
-- Date range: 2015-01 to 2025-12
-- Claims found: 7,063 (70.6%) | missing: 2,937
-- Abstract found: 9,755 (97.55%) | missing: 245
-- Claims text length (found rows): mean 3,666 chars, median 3,213, 25th/75th percentile 2,268/4,512, max 48,049
+**Investigation:** Checked whether "missing" meant a mix of true `NULL`, empty string, and whitespace-only values (which would suggest a parsing bug) or a clean, consistent absence.
+
+**Resolution:** Confirmed all 201 cases were clean `NULL` - no empty strings, no whitespace-only values. No data quality ambiguity; these patents genuinely lack an abstract in the source data. Retained in the corpus rather than excluded, with an `abstract_status` flag; Phase 2 embedding should fall back to title-only embedding for these specific records.
+
+---
+
+### 6.5 CPC subgroup stratification gap (found during peer review, most significant fix)
+
+**Symptom:** Corpus review by a project collaborator raised a design concern: the sampling strategy's stated justification ("broad, representative coverage of the CPC subgroup space") depended on stratifying by CPC subgroup, but the actual sampling code only grouped by `year`. If true, the corpus could be dominated by whichever G06T subgroups happened to be most common in the raw data, with representativeness across subtypes (e.g. object tracking vs. image enhancement vs. 3D rendering) never actually verified.
+
+**Investigation:**
+- Confirmed the concern was valid, not hypothetical: `g_cpc_current.tsv` does contain a `cpc_group` column (real values, e.g. `G06T7/00`) - subgroup-level classification genuinely exists in the source data.
+- Traced the root cause precisely: `pd.read_csv(..., usecols=["patent_id", "cpc_subclass"])` excluded `cpc_group` at the very first read of the file - it was never dropped downstream, it never entered the pipeline at all.
+- Classified this as a fixable pipeline defect, not a data availability limitation.
+
+**Resolution - first attempt:** Modified the pipeline to read `cpc_group` and stratify sampling by `(year, cpc_group)` via `groupby(["year", "cpc_group"]).apply(...)`. Hit a pandas 3.x behavior change where multi-column `groupby().apply()` drops the grouping columns from the result. Diagnosed via traceback inspection and confirmed by testing column presence post-groupby directly.
+
+**Resolution - final:** Rewrote the stratification step to build a single combined string key (`year + "|" + cpc_group`) and group by that one column instead of two - sidesteps the pandas multi-column-drop behavior entirely, since single-column groupby reliably preserves its key. Verified working end-to-end with no crash.
+
+**Consequence - corpus size dropped from a 10,000-patent target to 6,980.** This was investigated as a real design tradeoff, not treated as a bug to explain away:
+- **369 distinct G06T subgroups** exist in the filtered date range.
+- With even per-cell sampling caps applied across all 369 subgroups x 11 years (4,059 possible cells), many rare (subgroup, year) combinations simply do not contain enough patents to fill their target - the sum of achievable cells falls short of 10,000.
+- This is a direct, checkable mathematical consequence of strict even stratification against real-world subgroup sparsity - not a data shortage. Total available G06T patents in the date range is 134,850; raw supply was never the constraint.
+- The original 10,000 figure was a safety ceiling derived from Gemini embedding quota and FAISS query latency headroom, not a hard requirement. 6,980 sits comfortably under that ceiling.
+
+**Decision:** Accepted 6,980 as final rather than loosening per-cell caps to chase 10,000, since doing so would let common subgroups absorb the extra headroom while rare subgroups stayed thin - reintroducing the exact imbalance this fix was meant to resolve. A properly-stratified smaller corpus was judged preferable to a larger, unevenly-stratified one. Optional future work: revisit raised per-cell caps (e.g. recent=6/older=3) to test whether corpus size can grow closer to 10,000 without reintroducing imbalance.
+
+---
+
+## 7. Evaluation pairs
+
+Because the corpus was rebuilt twice after the initial version (once for the subgroup fix, once more for the pandas workaround), evaluation anchors were **deliberately re-selected from the final corpus each time**, rather than force-included from an earlier sample - force-including specific known IDs after the fact would reintroduce the exact cherry-picking bias the selection process is meant to avoid.
+
+**Final pairs, selected from the completed 6,980-patent corpus:**
+
+| Pair | Patents | Relationship |
+|---|---|---|
+| Similar 1 | `8928658` (photon mapping via kd-trees) vs. `8933933` (early Z-mode rendering pipeline) | Both GPU rendering pipeline optimization techniques |
+| Similar 2 | `8934666` (surrounding object/scene analysis, class segmenting) vs. `8929621` (segmentation and surface matching) | Both scene/object segmentation approaches |
+| Dissimilar | `8929589` (high-resolution gaze tracking) vs. `8930719` (data protection encoding/decoding) | Unrelated CV problem domains; second patent is only nominally G06T-classified |
+
+Verified present in final corpus: 6/6.
+
+**Known limitation (see Section 3, decision 2):** these pairs were selected by browsing patents already inside the built corpus, not chosen independently beforehand. Their presence is guaranteed by construction rather than evidence of retrieval quality. Useful as an initial smoke test; independently-sourced pairs should be used before final retrieval-quality claims are made.
+
+---
+
+## 8. Final corpus statistics
+
+| Metric | Value |
+|---|---|
+| Total patents | 6,980 |
+| CPC scope | G06T, stratified across 369 distinct subgroups |
+| Date range | 2015-01 to 2025-12 |
+| Claims found | 4,479 (64.2%) |
+| Claims missing | 2,501 (35.8%) |
+| Abstract found | 6,779 (97.12%) |
+| Abstract missing | 201 (2.88%) |
+| Claims text length (found, chars) | mean 3,651 - median 3,203 - p25 2,203 - p75 4,520 - max 33,344 |
+
+---
+
+## 9. Open items for downstream phases
+
+- **Missing-abstract fallback:** Phase 2 embedding should implement title-only embedding for the 201 patents lacking abstract text, rather than excluding them from retrieval entirely.
+- **Eval pair strength:** current pairs are corpus-derived (see Section 3, decision 2); independently-sourced pairs should be added before final retrieval-quality claims.
+- **2011-2014 gap:** claims bulk files for these years repeatedly failed to download; corpus date range starts at 2015 as a result (see Section 3, decision 1). Revisit if earlier coverage becomes necessary.
+- **Optional stretch:** test raised per-cell stratification caps to see if corpus size can approach 10,000 without reintroducing subgroup imbalance (see Section 6.5).
