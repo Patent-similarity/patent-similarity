@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from models import SearchRequest, SearchResponse
 from mock_data import get_mock_search_response
 
@@ -6,6 +7,13 @@ app = FastAPI(
     title="Patent Similarity Search API",
     description="Free-text patent similarity search backend (Phase 4).",
     version="0.1.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # TODO: restrict to actual frontend origin before production
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
