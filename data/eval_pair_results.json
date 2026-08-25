@@ -1,0 +1,47 @@
+{
+  "S2": {
+    "query_id": "11676310",
+    "partner_id": "11790567",
+    "stage1_rank": 4,
+    "stage2_rank": 4,
+    "stage1_candidates": 50,
+    "stage2_candidates": 34,
+    "elapsed_seconds": 123.85
+  },
+  "S3": {
+    "query_id": "10674162",
+    "partner_id": "11818368",
+    "stage1_rank": 2,
+    "stage2_rank": 2,
+    "stage1_candidates": 50,
+    "stage2_candidates": 31,
+    "elapsed_seconds": 169.77
+  },
+  "D1": {
+    "query_id": "11676310",
+    "partner_id": "11869140",
+    "stage1_rank": null,
+    "stage2_rank": null,
+    "stage1_candidates": 50,
+    "stage2_candidates": 34,
+    "elapsed_seconds": 171.78
+  },
+  "D2": {
+    "query_id": "11615557",
+    "partner_id": "11776314",
+    "stage1_rank": null,
+    "stage2_rank": null,
+    "stage1_candidates": 50,
+    "stage2_candidates": 32,
+    "elapsed_seconds": 113.16
+  },
+  "D3": {
+    "query_id": "12307167",
+    "partner_id": "10229528",
+    "stage1_rank": 32,
+    "stage2_rank": 18,
+    "stage1_candidates": 50,
+    "stage2_candidates": 32,
+    "elapsed_seconds": 232.14
+  }
+}

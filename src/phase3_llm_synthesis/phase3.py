@@ -145,18 +145,7 @@ explanations, or any text before or after the JSON object.
 # =========================================================
 
 def validate_output(result, patent):
-    """
-    Validate one Phase 3 synthesis result.
-
-    Ensures:
-        - result is a dictionary
-        - exactly four top-level fields exist
-        - verdict is valid
-        - supporting evidence has exactly quote/source
-        - source is valid
-        - quote is non-empty
-        - quote is an exact contiguous substring
-    """
+    """Validate one Phase 3 synthesis result."""
 
     assert isinstance(
         result,
@@ -233,19 +222,6 @@ def synthesize_patent(
     """
     Generate and validate a Phase 3 relevance verdict
     for one patent candidate.
-
-    Args:
-        client:
-            Gemini client.
-
-        query:
-            Raw invention description/query.
-
-        patent:
-            Patent dictionary containing abstract and claims.
-
-    Returns:
-        Validated four-field synthesis dictionary.
     """
 
     prompt = build_prompt(
@@ -253,15 +229,25 @@ def synthesize_patent(
         patent,
     )
 
-    response = client.models.generate_content(
-        model=SYNTHESIS_MODEL,
-        contents=prompt,
-        config={
-            "response_mime_type": "application/json",
-        },
-    )
+    try:
+
+        response = client.models.generate_content(
+            model=SYNTHESIS_MODEL,
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+            },
+        )
+
+    except Exception as error:
+
+        raise RuntimeError(
+            f"Gemini synthesis request failed for "
+            f"patent {patent['id']}."
+        ) from error
 
     if not response.text:
+
         raise ValueError(
             f"Empty synthesis response for "
             f"patent {patent['id']}."
@@ -286,6 +272,47 @@ def synthesize_patent(
     )
 
     return result
+
+
+# =========================================================
+# Internal worker for concurrent Phase 3
+# =========================================================
+
+def _synthesize_candidate(
+    client,
+    query,
+    patent,
+    rank,
+    retrieval,
+    idx,
+):
+    """
+    Worker executed by a ThreadPoolExecutor.
+
+    Each candidate is synthesized independently.
+    """
+
+    verdict = synthesize_patent(
+        client=client,
+        query=query,
+        patent=patent,
+    )
+
+    return {
+        "rank": rank,
+        "patent_id": patent["id"],
+        "title": patent["title"],
+        "abstract_score": float(
+            retrieval["abstract_scores"][idx]
+        ),
+        "claim_score": float(
+            retrieval["claim_scores"][idx]
+        ),
+        "final_score": float(
+            retrieval["final_scores"][idx]
+        ),
+        "synthesis": verdict,
+    }
 
 
 # =========================================================
@@ -396,85 +423,109 @@ def run_patent_similarity(
         retrieval["stage2_indices"],
         max_results=max_results,
     )
-       # -----------------------------------------------------
+
+    # -----------------------------------------------------
+    # Nothing to synthesize
+    # -----------------------------------------------------
+
+    if len(selected_indices) == 0:
+
+        return {
+            "query": query,
+        "stage1_candidates": [
+            {
+                "patent_id": index_data["patents"][idx]["id"],
+                "title": index_data["patents"][idx]["title"],
+                "score": float(retrieval["abstract_scores"][idx]),
+            }
+            for idx in retrieval["stage1_indices"]
+        ],
+
+        "stage2_candidates": [
+            {
+                "patent_id": index_data["patents"][idx]["id"],
+                "title": index_data["patents"][idx]["title"],
+                "score": float(retrieval["final_scores"][idx]),
+            }
+            for idx in retrieval["stage2_indices"]
+        ],
+            "results": [],
+        }
+
+    # -----------------------------------------------------
     # Phase 3 — concurrent LLM synthesis
     # -----------------------------------------------------
 
-    selected_patents = [
-        index_data["patents"][idx]
-        for idx in selected_indices
+    # Never create more workers than actual candidates.
+    worker_count = min(
+        max_workers,
+        len(selected_indices),
+    )
+
+    results_by_rank = {}
+
+    with ThreadPoolExecutor(
+        max_workers=worker_count,
+    ) as executor:
+
+        future_to_rank = {}
+
+        for rank, idx in enumerate(
+            selected_indices,
+            start=1,
+        ):
+
+            patent = index_data["patents"][idx]
+
+            future = executor.submit(
+                _synthesize_candidate,
+                client,
+                query,
+                patent,
+                rank,
+                retrieval,
+                idx,
+            )
+
+            future_to_rank[future] = rank
+
+        # -------------------------------------------------
+        # Collect results as workers finish.
+        #
+        # We store them by rank so the final output keeps
+        # the original Phase 2 ranking order.
+        # -------------------------------------------------
+
+        for future in as_completed(
+            future_to_rank
+        ):
+
+            rank = future_to_rank[future]
+
+            try:
+                result = future.result()
+            except Exception as error:
+                patent = index_data["patents"][selected_indices[rank - 1]]
+                result = {
+                    "rank": rank,
+                    "patent_id": patent["id"],
+                    "title": patent["title"],
+                    "error": str(error),
+                }
+
+            results_by_rank[rank] = result
+
+    # -----------------------------------------------------
+    # Restore Phase 2 ranking order
+    # -----------------------------------------------------
+
+    results = [
+        results_by_rank[rank]
+        for rank in sorted(
+            results_by_rank
+        )
     ]
 
-    # Pre-size the list so results can be written back
-    # to their original rank even if threads finish out of order.
-    results = [None] * len(selected_patents)
-
-    if selected_patents:
-
-        with ThreadPoolExecutor(
-            max_workers=max_workers
-        ) as executor:
-
-            future_to_position = {
-                executor.submit(
-                    synthesize_patent,
-                    client,
-                    query,
-                    patent,
-                ): position
-
-                for position, patent in enumerate(
-                    selected_patents
-                )
-            }
-
-            for future in as_completed(
-                future_to_position
-            ):
-
-                position = future_to_position[future]
-
-                patent = selected_patents[position]
-
-                idx = selected_indices[position]
-
-                try:
-
-                    verdict = future.result()
-
-                    results[position] = {
-                        "rank": position + 1,
-                        "patent_id": patent["id"],
-                        "title": patent["title"],
-                        "abstract_score": float(
-                            retrieval["abstract_scores"][idx]
-                        ),
-                        "claim_score": float(
-                            retrieval["claim_scores"][idx]
-                        ),
-                        "final_score": float(
-                            retrieval["final_scores"][idx]
-                        ),
-                        "synthesis": verdict,
-                    }
-
-                except Exception as error:
-
-                    results[position] = {
-                        "rank": position + 1,
-                        "patent_id": patent["id"],
-                        "title": patent["title"],
-                        "abstract_score": float(
-                            retrieval["abstract_scores"][idx]
-                        ),
-                        "claim_score": float(
-                            retrieval["claim_scores"][idx]
-                        ),
-                        "final_score": float(
-                            retrieval["final_scores"][idx]
-                        ),
-                        "error": str(error),
-                    }
     # -----------------------------------------------------
     # Return combined result
     # -----------------------------------------------------
@@ -483,12 +534,20 @@ def run_patent_similarity(
         "query": query,
 
         "stage1_candidates": [
-            int(idx)
+            {
+                "patent_id": index_data["patents"][idx]["id"],
+                "title": index_data["patents"][idx]["title"],
+                "score": float(retrieval["abstract_scores"][idx]),
+            }
             for idx in retrieval["stage1_indices"]
         ],
 
         "stage2_candidates": [
-            int(idx)
+            {
+                "patent_id": index_data["patents"][idx]["id"],
+                "title": index_data["patents"][idx]["title"],
+                "score": float(retrieval["final_scores"][idx]),
+            }
             for idx in retrieval["stage2_indices"]
         ],
 
@@ -506,9 +565,6 @@ def run_test(
 ):
     """
     Standalone test for the Phase 3 synthesis prompt.
-
-    This is kept for validating the prompt independently
-    of Phase 2 retrieval.
     """
 
     client = get_client()
@@ -548,7 +604,7 @@ def run_test(
 
 
 # =========================================================
-# Existing standalone prompt tests
+# Standalone prompt tests
 # =========================================================
 
 if __name__ == "__main__":
