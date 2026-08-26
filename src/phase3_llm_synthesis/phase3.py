@@ -326,7 +326,7 @@ def run_patent_similarity(
     top_k=50,
     max_results=5,
     claims_batch_size=100,
-    claims_delay=31.0,
+    claims_delay=60.0,
     max_retries=5,
     max_workers=2,
 ):
