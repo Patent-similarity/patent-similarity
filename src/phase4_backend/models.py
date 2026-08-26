@@ -1,62 +1,78 @@
-from pydantic import BaseModel, Field
-from typing import Literal
+"""
+Phase 4 models - matches the Phase 3 -> Phase 4 contract from partner's handoff.
+"""
+
+from pydantic import BaseModel
+from typing import Optional, List, Union
+from enum import Enum
+
+
+class JobStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    complete = "complete"
+    failed = "failed"
 
 
 class SearchRequest(BaseModel):
-    """What the caller sends us: a free-text invention description."""
-    query_text: str = Field(
-        ...,
-        min_length=10,
-        description="Free-text description of the invention to search for similar patents."
-    )
-    top_k: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Number of top matching patents to return (1-20)."
-    )
+    query: str
+
+
+class SearchJobCreated(BaseModel):
+    job_id: str
+    status: JobStatus  # always "pending" at creation
+
+
+class Candidate(BaseModel):
+    """Stage 1 / Stage 2 candidate objects - real objects, not raw FAISS indices."""
+    patent_id: str
+    title: str
+    score: float
 
 
 class SupportingEvidence(BaseModel):
-    """A verbatim excerpt backing a synthesis verdict."""
-    quote: str = Field(..., description="Verbatim substring from the source patent.")
-    source: Literal["claim", "abstract"]
+    quote: str
+    source: str
 
 
-class FullTreatmentResult(BaseModel):
-    """
-    A top-5, Stage-2-eligible result: has claims-match data, so gets
-    the full synthesis treatment (verdict + reasoning + evidence).
-    """
-    patent_id: str
-    title: str
-    score: float = Field(..., ge=0.0, le=1.0)
-    verdict: Literal[
-        "HIGH_RELEVANCE",
-        "POSSIBLE_RELEVANCE",
-        "LOW_RELEVANCE",
-        "INSUFFICIENT_EVIDENCE"
-    ]
+class Synthesis(BaseModel):
+    verdict: str  # HIGH_RELEVANCE | POSSIBLE_RELEVANCE | LOW_RELEVANCE | INSUFFICIENT_EVIDENCE
     overlap_summary: str
     key_difference: str
     supporting_evidence: SupportingEvidence
 
 
-class BasicMatch(BaseModel):
+class ResultCandidate(BaseModel):
     """
-    A rank 6-50, Stage-1-only result: no claims match, so no synthesis --
-    just the raw retrieval hit.
+    A single ranked result. Exactly one of `synthesis` or `error` is present,
+    never both -- this is the individual-candidate success/failure contract.
     """
+    rank: int
     patent_id: str
     title: str
-    score: float = Field(..., ge=0.0, le=1.0)
+    abstract_score: float
+    claim_score: float
+    final_score: float
+    synthesis: Optional[Synthesis] = None
+    error: Optional[str] = None
 
 
-class SearchResponse(BaseModel):
+class PipelineResult(BaseModel):
+    query: str
+    stage1_candidates: List[Candidate]
+    stage2_candidates: List[Candidate]
+    results: List[ResultCandidate]
+
+
+class JobStatusResponse(BaseModel):
     """
-    What we send back: up to 5 fully-synthesized results, plus up to 45
-    additional lower-confidence matches with no synthesis.
+    Response shape for GET /search/{job_id}. `result` is only present when
+    status == "complete". `error` is only present when status == "failed"
+    (this is a PIPELINE-level failure, not an individual candidate failure --
+    individual candidate failures live inside PipelineResult.results as
+    per-candidate `error` fields and do NOT set this top-level status to failed).
     """
-    query_text: str
-    full_treatment_results: list[FullTreatmentResult]
-    additional_matches: list[BasicMatch]
+    job_id: str
+    status: JobStatus
+    result: Optional[PipelineResult] = None
+    error: Optional[str] = None
