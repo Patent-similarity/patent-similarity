@@ -8,6 +8,10 @@ Architecture, per partner's Phase 3 handoff:
   not per-request.
 """
 
+import logging
+import pickle
+
+import faiss
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -16,7 +20,10 @@ import job_store
 
 # TODO(integration): import the real Phase 3 entry point once wired up:
 # from phase3_llm_synthesis.phase3 import run_patent_similarity
-# from phase2_embedding_retrieval.pipeline import get_client, load_index
+# from phase2_embedding_retrieval.pipeline import get_client
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Patent Similarity Search API")
 
@@ -30,18 +37,39 @@ app.add_middleware(
 # ---------------------------------------------------------------------
 # Startup: initialize expensive, reusable resources ONCE.
 # Per partner's handoff -- do NOT rebuild the FAISS index per request.
+#
+# TODO(integration): FAISS_INDEX_PATH and PATENTS_PICKLE_PATH currently
+# point at the dummy test index built by build_dummy_index.py. Once the
+# partner's real index build finishes, swap these two paths to point at
+# the real files -- no other code here should need to change.
 # ---------------------------------------------------------------------
+FAISS_INDEX_PATH = "dummy_index/index.faiss"
+PATENTS_PICKLE_PATH = "dummy_index/patents.pkl"
+
 gemini_client = None
 phase2_index = None
+phase2_patents = None
 
 
 @app.on_event("startup")
 def startup_event():
-    global gemini_client, phase2_index
-    # TODO(integration): replace with real initialization once wired up:
-    # gemini_client = get_client()  # reuses GEMINI_API_KEY per partner's existing get_client()
-    # phase2_index = load_index()
-    print("Startup: Gemini client and Phase 2 FAISS index would load here.")
+    global gemini_client, phase2_index, phase2_patents
+
+    logger.info("Loading FAISS index from %s ...", FAISS_INDEX_PATH)
+    phase2_index = faiss.read_index(FAISS_INDEX_PATH)
+    logger.info(
+        "FAISS index loaded: %d vectors, dim %d",
+        phase2_index.ntotal, phase2_index.d
+    )
+
+    logger.info("Loading patent list from %s ...", PATENTS_PICKLE_PATH)
+    with open(PATENTS_PICKLE_PATH, "rb") as f:
+        phase2_patents = pickle.load(f)
+    logger.info("Loaded %d patents", len(phase2_patents))
+
+    # TODO(integration): replace with real Gemini client initialization:
+    # gemini_client = get_client()
+    logger.info("Gemini client init would happen here (not wired up yet).")
 
 
 # ---------------------------------------------------------------------
@@ -68,11 +96,18 @@ def run_search_job(job_id: str, query: str):
         raise NotImplementedError("Real Phase 3 call not wired up yet.")
 
     except ValueError as e:
-        # Pipeline-level failure (e.g. empty query, invalid config) --
-        # this is the ONLY case that should set the job to failed.
+        # Pipeline-level failure the partner's code raises intentionally
+        # (e.g. empty query, invalid config). The message is safe and
+        # useful to show directly to the client.
         job_store.mark_failed(job_id, str(e))
     except Exception as e:
-        job_store.mark_failed(job_id, str(e))
+        # Unexpected failure -- network error, bad index file, etc.
+        # Never assume an exception message is safe for the client just
+        # because it was caught. Log the real error server-side for
+        # debugging, but return a sanitized, generic message so internal
+        # details (file paths, API errors, config) never leak to callers.
+        logger.exception("Unexpected error in search job %s", job_id)
+        job_store.mark_failed(job_id, "Search failed unexpectedly. Please try again.")
 
 
 # ---------------------------------------------------------------------
