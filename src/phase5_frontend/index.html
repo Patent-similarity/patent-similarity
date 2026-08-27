@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patent Similarity Search</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Patent Similarity Search</h1>
+            <p class="subtitle">Describe an invention to find related patents.</p>
+        </header>
+
+        <form id="search-form" class="search-form">
+            <textarea
+                id="query-input"
+                placeholder="Describe the invention you'd like to search for..."
+                rows="4"
+                required
+            ></textarea>
+            <button type="submit" id="submit-btn">Search</button>
+        </form>
+
+        <div id="status-area" class="status-area hidden">
+            <div class="spinner"></div>
+            <p id="status-text">Submitting search...</p>
+            <p id="elapsed-time" class="elapsed-time"></p>
+        </div>
+
+        <div id="error-area" class="error-area hidden">
+            <p id="error-text"></p>
+        </div>
+
+        <div id="results-area" class="results-area hidden">
+            <section id="synthesized-results">
+                <h2>Synthesized Results</h2>
+                <div id="synthesized-list"></div>
+            </section>
+
+            <section id="stage2-results">
+                <h2>Additional Claims-Matched Candidates</h2>
+                <div id="stage2-list"></div>
+            </section>
+
+            <section id="stage1-results">
+                <h2>Additional Abstract-Matched Candidates</h2>
+                <div id="stage1-list"></div>
+            </section>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
