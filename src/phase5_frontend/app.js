@@ -106,8 +106,8 @@ function renderResults(result) {
     if (result.results.length === 0) {
         synthesizedList.innerHTML = "<p>No candidates reached full synthesis.</p>";
     }
-    result.results.forEach((r) => {
-        synthesizedList.appendChild(renderSynthesizedCard(r));
+    result.results.forEach((r, i) => {
+        synthesizedList.appendChild(renderSynthesizedCard(r, i));
     });
 
     // Stage 2 candidates -- score-only, excluding ones already shown above
@@ -119,7 +119,8 @@ function renderResults(result) {
     if (remainingStage2.length === 0) {
         document.getElementById("stage2-results").classList.add("hidden");
     } else {
-        remainingStage2.forEach((c) => stage2List.appendChild(renderCandidateCard(c)));
+        document.getElementById("stage2-results").classList.remove("hidden");
+        remainingStage2.forEach((c, i) => stage2List.appendChild(renderCandidateCard(c, i)));
     }
 
     // Stage 1 candidates -- broadest, abstract-only matches
@@ -127,18 +128,20 @@ function renderResults(result) {
     if (result.stage1_candidates.length === 0) {
         document.getElementById("stage1-results").classList.add("hidden");
     } else {
-        result.stage1_candidates.forEach((c) => stage1List.appendChild(renderCandidateCard(c)));
+        document.getElementById("stage1-results").classList.remove("hidden");
+        result.stage1_candidates.forEach((c, i) => stage1List.appendChild(renderCandidateCard(c, i)));
     }
 }
 
-function renderSynthesizedCard(r) {
+function renderSynthesizedCard(r, i) {
     const card = document.createElement("div");
     card.className = "candidate-card";
+    card.style.setProperty("--i", i);
 
     if (r.error) {
         card.innerHTML = `
             <h3>${escapeHtml(r.title)}</h3>
-            <div class="candidate-meta">Patent ${escapeHtml(r.patent_id)} · Rank ${r.rank}</div>
+            <div class="candidate-meta">PATENT ${escapeHtml(r.patent_id)} &middot; RANK ${String(r.rank).padStart(2, "0")}</div>
             <p class="candidate-error">Synthesis failed for this candidate: ${escapeHtml(r.error)}</p>
         `;
         return card;
@@ -155,8 +158,8 @@ function renderSynthesizedCard(r) {
     card.innerHTML = `
         <h3>${escapeHtml(r.title)}</h3>
         <div class="candidate-meta">
-            Patent ${escapeHtml(r.patent_id)} · Rank ${r.rank} ·
-            abstract ${r.abstract_score.toFixed(2)} · claims ${r.claim_score.toFixed(2)} · final ${r.final_score.toFixed(2)}
+            PATENT ${escapeHtml(r.patent_id)} &middot; RANK ${String(r.rank).padStart(2, "0")} &middot;
+            ABSTRACT ${r.abstract_score.toFixed(2)} &middot; CLAIMS ${r.claim_score.toFixed(2)} &middot; FINAL ${r.final_score.toFixed(2)}
         </div>
         <span class="verdict-badge ${verdictClass}">${s.verdict.replace(/_/g, " ")}</span>
         <div class="candidate-detail">
@@ -168,18 +171,19 @@ function renderSynthesizedCard(r) {
             ${escapeHtml(s.key_difference)}
         </div>
         <div class="evidence-quote">
-            "${escapeHtml(s.supporting_evidence.quote)}" -- ${escapeHtml(s.supporting_evidence.source)}
+            &ldquo;${escapeHtml(s.supporting_evidence.quote)}&rdquo; &mdash; ${escapeHtml(s.supporting_evidence.source)}
         </div>
     `;
     return card;
 }
 
-function renderCandidateCard(c) {
+function renderCandidateCard(c, i) {
     const card = document.createElement("div");
     card.className = "candidate-card";
+    card.style.setProperty("--i", i);
     card.innerHTML = `
         <h3>${escapeHtml(c.title)}</h3>
-        <div class="candidate-meta">Patent ${escapeHtml(c.patent_id)} · score ${c.score.toFixed(2)}</div>
+        <div class="candidate-meta">PATENT ${escapeHtml(c.patent_id)} &middot; SCORE ${c.score.toFixed(2)}</div>
     `;
     return card;
 }
@@ -194,8 +198,6 @@ function resetUI() {
     hideStatus();
     hideError();
     resultsArea.classList.add("hidden");
-    document.getElementById("stage2-results").classList.remove("hidden");
-    document.getElementById("stage1-results").classList.remove("hidden");
 }
 
 function setSubmitting(isSubmitting) {

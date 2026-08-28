@@ -1,124 +1,296 @@
+/* ==========================================================
+   Patent Similarity Search — visual system
+   Direction: technical filing / drafting-table register.
+   Grounded in the subject: patent documents, claims,
+   technical drawings, docket stamps, registration marks.
+   ========================================================== */
+
 :root {
-    --color-bg: #f7f8fa;
-    --color-surface: #ffffff;
-    --color-border: #e2e5ea;
-    --color-text: #1a1d23;
-    --color-text-muted: #6b7280;
-    --color-primary: #2563eb;
-    --color-primary-hover: #1d4ed8;
-    --color-success: #059669;
-    --color-warning: #d97706;
-    --color-danger: #dc2626;
-    --color-neutral: #6b7280;
-    --radius: 8px;
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+    --paper: #f5f6f4;
+    --paper-alt: #eceeec;
+    --ink: #151a1e;
+    --ink-soft: #4b5560;
+    --ink-faint: #838d95;
+    --line: #ccd4d9;
+    --line-soft: #e0e5e8;
+
+    --blueprint: #2b5f86;
+    --blueprint-dark: #1e4666;
+    --blueprint-tint: #e7eef3;
+
+    --verdict-high: #1e7a46;
+    --verdict-high-bg: #e6f2ea;
+    --verdict-possible: #9a6a10;
+    --verdict-possible-bg: #f5eddb;
+    --verdict-low: #5b6570;
+    --verdict-low-bg: #eaecee;
+    --verdict-insufficient: #9c3b3b;
+    --verdict-insufficient-bg: #f5e6e6;
+    --error: #9c3b3b;
+    --error-bg: #f7ecec;
+
+    --font-display: "Space Grotesk", sans-serif;
+    --font-body: "Inter", sans-serif;
+    --font-mono: "IBM Plex Mono", monospace;
+
+    --radius: 3px;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 * {
     box-sizing: border-box;
-    margin: 0;
-    padding: 0;
+}
+
+html {
+    -webkit-font-smoothing: antialiased;
+    scroll-behavior: smooth;
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--color-bg);
-    color: var(--color-text);
+    margin: 0;
+    background: var(--paper);
+    background-image:
+        linear-gradient(var(--line-soft) 1px, transparent 1px),
+        linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+    background-size: 32px 32px;
+    background-position: center top;
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
     line-height: 1.5;
+    min-height: 100vh;
 }
 
-.container {
-    max-width: 900px;
+.sheet {
+    max-width: 760px;
     margin: 0 auto;
-    padding: 48px 24px;
+    padding: 56px 24px 80px;
 }
 
-header {
-    text-align: center;
-    margin-bottom: 32px;
+/* ---------- Page-load sequence ---------- */
+/* One orchestrated entrance, not scattered effects: header and
+   panel rise in on load, staggered slightly. Nothing else moves
+   on load — the entrance is the one deliberate moment. */
+
+.filing-header,
+.filing-panel {
+    opacity: 0;
+    animation: rise 0.6s var(--ease) forwards;
 }
 
-header h1 {
-    font-size: 28px;
+.filing-header { animation-delay: 0.02s; }
+.filing-panel { animation-delay: 0.14s; }
+
+@keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Header ---------- */
+
+.filing-header {
+    margin-bottom: 40px;
+}
+
+.filing-header__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--blueprint);
+}
+
+.docket {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--ink-faint);
+}
+
+h1 {
+    font-family: var(--font-display);
     font-weight: 600;
-    margin-bottom: 8px;
+    font-size: clamp(32px, 5vw, 44px);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    margin: 0 0 16px;
+    color: var(--ink);
 }
 
 .subtitle {
-    color: var(--color-text-muted);
-    font-size: 15px;
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    max-width: 52ch;
+    margin: 0;
 }
 
-.search-form {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
+/* ---------- Filing panel (search box) ---------- */
+
+.filing-panel {
+    position: relative;
+    background: #ffffff;
+    border: 1px solid var(--line);
     border-radius: var(--radius);
-    padding: 20px;
-    box-shadow: var(--shadow);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 24px;
+    padding: 28px;
+    margin-bottom: 28px;
+    transition: box-shadow 0.25s ease;
+}
+
+.filing-panel:focus-within {
+    box-shadow: 0 4px 24px -8px rgba(43, 95, 134, 0.18);
+}
+
+.corner {
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    pointer-events: none;
+    opacity: 0.55;
+    transition: opacity 0.25s ease;
+}
+
+.filing-panel:focus-within .corner {
+    opacity: 1;
+}
+
+.corner::before,
+.corner::after {
+    content: "";
+    position: absolute;
+    background: var(--blueprint);
+}
+
+.corner::before { width: 100%; height: 1.5px; top: 50%; left: 0; transform: translateY(-50%); }
+.corner::after { height: 100%; width: 1.5px; left: 50%; top: 0; transform: translateX(-50%); }
+
+.corner--tl { top: -6px; left: -6px; }
+.corner--tr { top: -6px; right: -6px; }
+.corner--bl { bottom: -6px; left: -6px; }
+.corner--br { bottom: -6px; right: -6px; }
+
+.field-label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 10px;
 }
 
 textarea {
     width: 100%;
-    padding: 12px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    font-family: inherit;
-    font-size: 15px;
     resize: vertical;
+    min-height: 96px;
+    padding: 14px 16px;
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+textarea::placeholder {
+    color: var(--ink-faint);
 }
 
 textarea:focus {
     outline: none;
-    border-color: var(--color-primary);
+    border-color: var(--blueprint);
+    background: #ffffff;
+    box-shadow: 0 0 0 3px var(--blueprint-tint);
 }
 
-button#submit-btn {
-    align-self: flex-end;
-    padding: 10px 24px;
-    background: var(--color-primary);
-    color: white;
+.form-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 16px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.hint {
+    font-size: 13px;
+    color: var(--ink-faint);
+}
+
+button {
+    font-family: var(--font-body);
+    cursor: pointer;
+}
+
+#submit-btn {
+    position: relative;
+    background: var(--blueprint);
+    color: #ffffff;
     border: none;
     border-radius: var(--radius);
+    padding: 11px 28px;
     font-size: 15px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    transition: background 0.18s ease, transform 0.12s ease, box-shadow 0.18s ease;
+    overflow: hidden;
 }
 
-button#submit-btn:hover {
-    background: var(--color-primary-hover);
+#submit-btn:hover:not(:disabled) {
+    background: var(--blueprint-dark);
+    box-shadow: 0 2px 10px -2px rgba(43, 95, 134, 0.4);
 }
 
-button#submit-btn:disabled {
-    background: var(--color-text-muted);
+#submit-btn:active:not(:disabled) {
+    transform: translateY(1px) scale(0.99);
+}
+
+#submit-btn:focus-visible {
+    outline: 2px solid var(--blueprint);
+    outline-offset: 2px;
+}
+
+#submit-btn:disabled {
+    background: var(--ink-faint);
     cursor: not-allowed;
+    box-shadow: none;
 }
 
-.hidden {
-    display: none !important;
-}
+/* ---------- Status ---------- */
 
 .status-area {
-    text-align: center;
-    padding: 32px;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px;
+    background: var(--blueprint-tint);
+    border: 1px solid var(--line);
     border-radius: var(--radius);
-    margin-bottom: 24px;
+    margin-bottom: 28px;
+    animation: rise 0.35s var(--ease) forwards;
 }
 
 .spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid var(--color-border);
-    border-top-color: var(--color-primary);
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--blueprint);
+    border-top-color: transparent;
     border-radius: 50%;
-    margin: 0 auto 16px;
     animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
 }
 
 @keyframes spin {
@@ -126,100 +298,301 @@ button#submit-btn:disabled {
 }
 
 #status-text {
+    margin: 0;
+    font-size: 14px;
+    color: var(--blueprint-dark);
     font-weight: 500;
-    margin-bottom: 4px;
+    flex-grow: 1;
 }
 
 .elapsed-time {
-    color: var(--color-text-muted);
+    margin: 0;
+    font-family: var(--font-mono);
     font-size: 13px;
+    color: var(--blueprint);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
+
+/* ---------- Error ---------- */
 
 .error-area {
-    background: #fef2f2;
-    border: 1px solid #fecaca;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--error-bg);
+    border: 1px solid #e0bcbc;
+    border-left: 3px solid var(--error);
     border-radius: var(--radius);
-    padding: 16px;
-    color: var(--color-danger);
-    margin-bottom: 24px;
+    margin-bottom: 28px;
+    animation: rise 0.3s var(--ease) forwards;
 }
 
-.results-area section {
-    margin-bottom: 32px;
-}
-
-.results-area h2 {
-    font-size: 16px;
+.error-mark {
+    font-family: var(--font-mono);
     font-weight: 600;
-    margin-bottom: 12px;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
+    font-size: 13px;
+    color: #ffffff;
+    background: var(--error);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
 }
+
+#error-text {
+    margin: 0;
+    font-size: 14px;
+    color: var(--error);
+    line-height: 1.5;
+}
+
+/* ---------- Results ---------- */
+
+.results-area {
+    animation: rise 0.4s var(--ease) forwards;
+}
+
+.result-section {
+    margin-bottom: 36px;
+}
+
+.result-section__head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.result-section h2 {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--ink);
+}
+
+.result-section--muted h2 {
+    font-size: 15px;
+    color: var(--ink-soft);
+}
+
+.result-section__note {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+}
+
+.card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.card-list--compact {
+    gap: 8px;
+}
+
+/* ---------- Candidate cards ---------- */
+/* Each card enters with a brief, staggered rise (delay set inline
+   per-card via --i from app.js) — an orchestrated reveal of the
+   result set rather than a static dump of content. */
 
 .candidate-card {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
+    position: relative;
+    background: #ffffff;
+    border: 1px solid var(--line);
     border-radius: var(--radius);
-    padding: 16px;
-    margin-bottom: 12px;
-    box-shadow: var(--shadow);
+    padding: 22px 24px;
+    opacity: 0;
+    animation: card-in 0.45s var(--ease) forwards;
+    animation-delay: calc(var(--i, 0) * 60ms);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.candidate-card:hover {
+    border-color: #b7c3ca;
+    box-shadow: 0 6px 20px -10px rgba(21, 26, 30, 0.15);
+    transform: translateY(-1px);
+}
+
+@keyframes card-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.card-list--compact .candidate-card {
+    padding: 14px 18px;
+}
+
+.candidate-card::before,
+.candidate-card::after {
+    content: "";
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    pointer-events: none;
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+}
+
+.candidate-card:hover::before,
+.candidate-card:hover::after {
+    opacity: 1;
+}
+
+.candidate-card::before {
+    top: -4px;
+    left: -4px;
+    border-top: 1.5px solid var(--blueprint);
+    border-left: 1.5px solid var(--blueprint);
+}
+
+.candidate-card::after {
+    bottom: -4px;
+    right: -4px;
+    border-bottom: 1.5px solid var(--blueprint);
+    border-right: 1.5px solid var(--blueprint);
 }
 
 .candidate-card h3 {
-    font-size: 15px;
+    font-family: var(--font-body);
+    font-size: 16px;
     font-weight: 600;
-    margin-bottom: 8px;
+    margin: 0 0 6px;
+    color: var(--ink);
+    line-height: 1.35;
+}
+
+.card-list--compact .candidate-card h3 {
+    font-size: 14px;
+    margin-bottom: 4px;
 }
 
 .candidate-meta {
-    display: flex;
-    gap: 12px;
-    font-size: 13px;
-    color: var(--color-text-muted);
-    margin-bottom: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    letter-spacing: 0.01em;
+    margin-bottom: 12px;
+}
+
+.card-list--compact .candidate-meta {
+    margin-bottom: 0;
+}
+
+.candidate-error {
+    font-size: 14px;
+    color: var(--error);
+    margin: 8px 0 0;
 }
 
 .verdict-badge {
     display: inline-block;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
     font-weight: 600;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    letter-spacing: 0.02em;
+    padding: 4px 10px;
+    border-radius: 2px;
+    margin-bottom: 14px;
 }
 
-.verdict-high { background: #dcfce7; color: var(--color-success); }
-.verdict-possible { background: #fef3c7; color: var(--color-warning); }
-.verdict-low { background: #f3f4f6; color: var(--color-neutral); }
-.verdict-insufficient { background: #f3f4f6; color: var(--color-neutral); }
+.verdict-high { color: var(--verdict-high); background: var(--verdict-high-bg); }
+.verdict-possible { color: var(--verdict-possible); background: var(--verdict-possible-bg); }
+.verdict-low { color: var(--verdict-low); background: var(--verdict-low-bg); }
+.verdict-insufficient { color: var(--verdict-insufficient); background: var(--verdict-insufficient-bg); }
 
 .candidate-detail {
     font-size: 14px;
-    margin-top: 8px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin-bottom: 12px;
 }
 
 .candidate-detail strong {
     display: block;
-    font-size: 12px;
-    color: var(--color-text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    letter-spacing: 0.02em;
-    margin-bottom: 2px;
+    color: var(--ink-faint);
+    margin-bottom: 4px;
 }
 
 .evidence-quote {
-    background: var(--color-bg);
-    border-left: 3px solid var(--color-primary);
-    padding: 8px 12px;
-    margin-top: 8px;
+    font-family: var(--font-mono);
     font-size: 13px;
-    font-style: italic;
+    line-height: 1.6;
+    color: var(--ink);
+    background: var(--paper-alt);
+    border-left: 2px solid var(--blueprint);
+    padding: 10px 14px;
+    margin-top: 14px;
 }
 
-.candidate-error {
-    color: var(--color-danger);
-    font-size: 13px;
-    margin-top: 8px;
+/* ---------- Footer ---------- */
+
+.filing-footer {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-align: center;
+}
+
+/* ---------- Utility ---------- */
+
+.hidden {
+    display: none !important;
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-delay: 0ms !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+    .spinner {
+        border-top-color: var(--blueprint);
+    }
+}
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 560px) {
+    .sheet {
+        padding: 32px 16px 60px;
+    }
+    .filing-panel {
+        padding: 20px;
+    }
+    .form-footer {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    #submit-btn {
+        width: 100%;
+    }
+    .docket {
+        display: none;
+    }
 }

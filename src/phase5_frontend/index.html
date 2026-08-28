@@ -4,53 +4,83 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Patent Similarity Search</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Patent Similarity Search</h1>
-            <p class="subtitle">Describe an invention to find related patents.</p>
+    <div class="sheet">
+        <header class="filing-header">
+            <div class="filing-header__row">
+                <span class="eyebrow">Prior Art Search</span>
+                <span class="docket">DOCKET&nbsp;/&nbsp;<span id="corpus-count">6,980</span>&nbsp;RECORDS&nbsp;·&nbsp;CPC&nbsp;G06T</span>
+            </div>
+            <h1>Describe the invention.<br>See what already exists.</h1>
+            <p class="subtitle">Enter a plain-language description of a technical approach. The system retrieves and ranks related patents, with reasoning for each match.</p>
         </header>
 
-        <form id="search-form" class="search-form">
-            <textarea
-                id="query-input"
-                placeholder="Describe the invention you'd like to search for..."
-                rows="4"
-                required
-            ></textarea>
-            <button type="submit" id="submit-btn">Search</button>
-        </form>
+        <section class="filing-panel">
+            <span class="corner corner--tl" aria-hidden="true"></span>
+            <span class="corner corner--tr" aria-hidden="true"></span>
+            <span class="corner corner--bl" aria-hidden="true"></span>
+            <span class="corner corner--br" aria-hidden="true"></span>
+            <form id="search-form" class="search-form">
+                <label for="query-input" class="field-label">Invention description</label>
+                <textarea
+                    id="query-input"
+                    placeholder="e.g. A system that detects objects in camera images using a convolutional neural network, then tracks each object across frames..."
+                    rows="4"
+                    required
+                ></textarea>
+                <div class="form-footer">
+                    <span class="hint">Free text · no special syntax required</span>
+                    <button type="submit" id="submit-btn">Search</button>
+                </div>
+            </form>
+        </section>
 
         <div id="status-area" class="status-area hidden">
-            <div class="spinner"></div>
+            <span class="spinner" aria-hidden="true"></span>
             <p id="status-text">Submitting search...</p>
             <p id="elapsed-time" class="elapsed-time"></p>
         </div>
 
         <div id="error-area" class="error-area hidden">
+            <span class="error-mark" aria-hidden="true">!</span>
             <p id="error-text"></p>
         </div>
 
         <div id="results-area" class="results-area hidden">
-            <section id="synthesized-results">
-                <h2>Synthesized Results</h2>
-                <div id="synthesized-list"></div>
+            <section id="synthesized-results" class="result-section">
+                <div class="result-section__head">
+                    <h2>Synthesized results</h2>
+                    <span class="result-section__note">Full relevance analysis, top candidates</span>
+                </div>
+                <div id="synthesized-list" class="card-list"></div>
             </section>
 
-            <section id="stage2-results">
-                <h2>Additional Claims-Matched Candidates</h2>
-                <div id="stage2-list"></div>
+            <section id="stage2-results" class="result-section result-section--muted">
+                <div class="result-section__head">
+                    <h2>Additional claims-matched candidates</h2>
+                    <span class="result-section__note">Scored, not fully analyzed</span>
+                </div>
+                <div id="stage2-list" class="card-list card-list--compact"></div>
             </section>
 
-            <section id="stage1-results">
-                <h2>Additional Abstract-Matched Candidates</h2>
-                <div id="stage1-list"></div>
+            <section id="stage1-results" class="result-section result-section--muted">
+                <div class="result-section__head">
+                    <h2>Additional abstract-matched candidates</h2>
+                    <span class="result-section__note">Broadest match, abstract only</span>
+                </div>
+                <div id="stage1-list" class="card-list card-list--compact"></div>
             </section>
         </div>
-    </div>
 
+        <footer class="filing-footer">
+            <span>Two-stage retrieval: abstract similarity, then claims re-ranking</span>
+        </footer>
+    </div>
     <script src="app.js"></script>
 </body>
 </html>
