@@ -522,13 +522,18 @@ def get_embedding(
 
 def split_texts_by_token_budget(
     texts,
-    max_tokens=MAX_REQUEST_TOKENS,
+    max_tokens=9800,
 ):
     """
-    Split texts into batches whose estimated token count
-    stays below max_tokens.
+    Split texts into batches whose whole-batch estimated
+    token count stays below max_tokens.
 
     Texts are never split individually.
+
+    The same whole-batch token estimation method is used here
+    and later by embed_texts_with_retry(), preventing a batch
+    from being accepted by the splitter but rejected by the
+    embedding helper because of per-item rounding differences.
 
     Returns:
         List[List[str]]
@@ -536,62 +541,84 @@ def split_texts_by_token_budget(
 
     batches = []
     current_batch = []
-    current_tokens = 0
 
     for text in texts:
 
         text = text or ""
 
-        text_tokens = (
+        # ---------------------------------------------
+        # First check whether this individual text can
+        # fit inside one request.
+        # ---------------------------------------------
+
+        single_text_tokens = (
             RATE_LIMITER.estimate_tokens(
                 [text]
             )
         )
 
-        # A single text is too large for the configured
-        # request target.
-        if text_tokens > max_tokens:
+        if single_text_tokens > max_tokens:
 
-            # If we already have accumulated texts,
-            # finalize that batch first.
             if current_batch:
+
                 batches.append(
                     current_batch
                 )
-                current_batch = []
-                current_tokens = 0
 
-            # The individual text itself exceeds the target.
-            # We cannot safely split a single embedding input
-            # without changing its meaning, so fail clearly.
+                current_batch = []
+
             raise ValueError(
                 f"One text requires approximately "
-                f"{text_tokens:,} estimated tokens, "
+                f"{single_text_tokens:,} estimated tokens, "
                 f"which exceeds the per-request target "
                 f"of {max_tokens:,}."
             )
 
-        # Would adding this text exceed the request target?
+        # ---------------------------------------------
+        # Try adding this text to the current batch.
+        #
+        # IMPORTANT:
+        # Estimate the COMPLETE candidate batch instead
+        # of summing individually rounded estimates.
+        # ---------------------------------------------
+
+        candidate_batch = (
+            current_batch + [text]
+        )
+
+        candidate_tokens = (
+            RATE_LIMITER.estimate_tokens(
+                candidate_batch
+            )
+        )
+
         if (
             current_batch
-            and current_tokens + text_tokens
-            > max_tokens
+            and candidate_tokens > max_tokens
         ):
 
+            # Current batch is complete.
             batches.append(
                 current_batch
             )
 
-            current_batch = []
-            current_tokens = 0
+            # Start a new batch with this text.
+            current_batch = [
+                text
+            ]
 
-        current_batch.append(
-            text
-        )
+        else:
 
-        current_tokens += text_tokens
+            current_batch.append(
+                text
+            )
+
+    # ---------------------------------------------
+    # Add the final batch.
+    # ---------------------------------------------
 
     if current_batch:
+
         batches.append(
             current_batch
         )
