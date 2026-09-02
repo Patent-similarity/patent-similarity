@@ -128,11 +128,13 @@ def get_embedding_client():
     """
     Create the Google GenAI client.
     """
-
     from google import genai
+    import os
 
-    return genai.Client()
-
+    return genai.Client(
+        api_key=os.environ["GEMINI_API_KEY"],
+        vertexai=False,
+    )
 
 # ============================================================
 # CONFIGURATION VALIDATION
