@@ -9,3 +9,4 @@ embeddings/full_corpus/
 checkpoint.json
 data/eval_90.faiss
 data/eval_90_patents.pkl
+embeddings/faiss_index/
