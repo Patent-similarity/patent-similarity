@@ -10,3 +10,12 @@ checkpoint.json
 data/eval_90.faiss
 data/eval_90_patents.pkl
 embeddings/faiss_index/
+# eval/debug artifacts - kept local only
+data/evaluation_cases.json
+data/evaluation_report.json
+data/full_corpus_eval_results.json
+data/no_match_eval_results.json
+data/positive_rankings.json
+data/stage2_evaluation_results.json
+inspect_patent.py
+test/
