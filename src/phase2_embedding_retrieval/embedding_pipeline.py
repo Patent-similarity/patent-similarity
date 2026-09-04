@@ -15,6 +15,9 @@ Stage 2:
 
 Patents with missing claims are excluded from Stage 2.
 
+Oversized individual claims are split into smaller chunks.
+The maximum chunk similarity is used as the patent's claim score.
+
 This module also contains conservative RPM/TPM rate limiting for
 Gemini embedding requests.
 """
@@ -45,22 +48,6 @@ MAX_BATCH_SIZE = 100
 # =========================================================
 # Rate-limit configuration
 # =========================================================
-#
-# API limits:
-#
-#     RPM = 100
-#     TPM = 30,000
-#
-# We intentionally stay below those limits.
-#
-#     Safe RPM = 90
-#     Safe TPM = 27,000
-#
-# We also keep individual requests much smaller than the
-# minute budget. This is important because it lets multiple
-# requests fit inside the same minute instead of making one
-# huge request consume almost the entire TPM window.
-#
 
 RPM_LIMIT = 100
 TPM_LIMIT = 30_000
@@ -69,43 +56,32 @@ SAFE_RPM_LIMIT = 90
 SAFE_TPM_LIMIT = 27_000
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Conservative token estimate
-# ---------------------------------------------------------
-#
-# The previous 0.30 estimate was too optimistic.
-#
-# Your actual Gemini errors showed, for example:
-#
-#     34 claims -> approximately 34,452 tokens
-#
-# So we deliberately use 0.50 tokens/character.
-#
-# This is an estimate, not Google's tokenizer.
-# The purpose is to stay safely below the real TPM limit.
-#
+# =========================================================
 
 TOKENS_PER_CHARACTER = 0.50
 
 
-# ---------------------------------------------------------
+# =========================================================
 # Maximum estimated tokens per individual request
-# ---------------------------------------------------------
-#
-# 10,000 is deliberately conservative.
-#
-# It means roughly:
-#
-#     request 1 = ~10k
-#     request 2 = ~10k
-#     request 3 = ~7k
-#
-# can fit within one 27k safety window.
-#
-# The query embedding also consumes a small amount of TPM.
-#
+# =========================================================
 
 MAX_REQUEST_TOKENS = 10_000
+
+
+# =========================================================
+# Oversized individual-text target
+# =========================================================
+#
+# This is intentionally lower than MAX_REQUEST_TOKENS.
+#
+# A normal batch can target approximately 9,800 tokens.
+# An individually oversized claim is split to approximately
+# 9,000 estimated tokens per chunk for additional safety.
+#
+
+OVERSIZED_TEXT_MAX_TOKENS = 9_000
 
 
 # =========================================================
@@ -123,10 +99,6 @@ class EmbeddingRateLimiter:
     Important:
         A request is only reserved after there is enough
         capacity for it.
-
-    This prevents the old problem where the limiter allowed
-    a request that itself was larger than the remaining
-    TPM budget.
     """
 
     def __init__(
@@ -180,13 +152,16 @@ class EmbeddingRateLimiter:
     # -----------------------------------------------------
 
     def _reset_if_needed(self):
+
         elapsed = (
             time.monotonic()
             - self.window_start
         )
 
         if elapsed >= 60:
+
             self.window_start = time.monotonic()
+
             self.request_count = 0
             self.token_count = 0
 
@@ -211,6 +186,7 @@ class EmbeddingRateLimiter:
             estimated_tokens = 1
 
         if estimated_tokens > self.tpm_limit:
+
             raise ValueError(
                 f"Single request requires approximately "
                 f"{estimated_tokens:,} tokens, which exceeds "
@@ -249,6 +225,7 @@ class EmbeddingRateLimiter:
             reasons = []
 
             if not request_ok:
+
                 reasons.append(
                     f"RPM "
                     f"{self.request_count + 1}/"
@@ -256,6 +233,7 @@ class EmbeddingRateLimiter:
                 )
 
             if not token_ok:
+
                 reasons.append(
                     f"TPM "
                     f"{self.token_count + estimated_tokens:,}/"
@@ -306,6 +284,7 @@ def get_client():
     )
 
     if not api_key:
+
         raise ValueError(
             "GEMINI_API_KEY was not found. "
             "Check that your .env file contains "
@@ -355,10 +334,13 @@ def extract_retry_delay(error):
         )
 
         if matches:
+
             try:
+
                 return float(
                     matches[-1]
                 )
+
             except ValueError:
                 pass
 
@@ -528,12 +510,10 @@ def split_texts_by_token_budget(
     Split texts into batches whose whole-batch estimated
     token count stays below max_tokens.
 
-    Texts are never split individually.
+    Individual texts are not split here.
 
-    The same whole-batch token estimation method is used here
-    and later by embed_texts_with_retry(), preventing a batch
-    from being accepted by the splitter but rejected by the
-    embedding helper because of per-item rounding differences.
+    Oversized individual texts should first be handled by
+    split_oversized_text().
 
     Returns:
         List[List[str]]
@@ -575,11 +555,7 @@ def split_texts_by_token_budget(
             )
 
         # ---------------------------------------------
-        # Try adding this text to the current batch.
-        #
-        # IMPORTANT:
-        # Estimate the COMPLETE candidate batch instead
-        # of summing individually rounded estimates.
+        # Try adding this text to current batch.
         # ---------------------------------------------
 
         candidate_batch = (
@@ -597,12 +573,10 @@ def split_texts_by_token_budget(
             and candidate_tokens > max_tokens
         ):
 
-            # Current batch is complete.
             batches.append(
                 current_batch
             )
 
-            # Start a new batch with this text.
             current_batch = [
                 text
             ]
@@ -614,7 +588,7 @@ def split_texts_by_token_budget(
             )
 
     # ---------------------------------------------
-    # Add the final batch.
+    # Add final batch.
     # ---------------------------------------------
 
     if current_batch:
@@ -624,6 +598,132 @@ def split_texts_by_token_budget(
         )
 
     return batches
+
+
+# =========================================================
+# Oversized individual text splitting
+# =========================================================
+
+def split_oversized_text(
+    text,
+    max_tokens=OVERSIZED_TEXT_MAX_TOKENS,
+):
+    """
+    Split one oversized text into smaller chunks.
+
+    Chunks are split on whitespace so words are not cut
+    in the middle.
+
+    Normal-sized texts are returned unchanged.
+
+    Returns:
+        List[str]
+    """
+
+    text = text or ""
+
+    if not text:
+        return [""]
+
+    estimated_tokens = (
+        RATE_LIMITER.estimate_tokens(
+            [text]
+        )
+    )
+
+    if estimated_tokens <= max_tokens:
+        return [text]
+
+    # -----------------------------------------------------
+    # Convert the token target into an approximate
+    # character target using the same estimator.
+    # -----------------------------------------------------
+
+    max_characters = int(
+        max_tokens
+        / TOKENS_PER_CHARACTER
+    )
+
+    words = text.split()
+
+    chunks = []
+
+    current_words = []
+    current_characters = 0
+
+    for word in words:
+
+        additional_characters = (
+            len(word)
+            if not current_words
+            else len(word) + 1
+        )
+
+        # ---------------------------------------------
+        # Current chunk is full.
+        # ---------------------------------------------
+
+        if (
+            current_words
+            and
+            current_characters
+            + additional_characters
+            > max_characters
+        ):
+
+            chunks.append(
+                " ".join(
+                    current_words
+                )
+            )
+
+            current_words = [
+                word
+            ]
+
+            current_characters = (
+                len(word)
+            )
+
+        else:
+
+            current_words.append(
+                word
+            )
+
+            current_characters += (
+                additional_characters
+            )
+
+    if current_words:
+
+        chunks.append(
+            " ".join(
+                current_words
+            )
+        )
+
+    # -----------------------------------------------------
+    # Final safety validation.
+    # -----------------------------------------------------
+
+    for chunk in chunks:
+
+        estimated = (
+            RATE_LIMITER.estimate_tokens(
+                [chunk]
+            )
+        )
+
+        if estimated > max_tokens:
+
+            raise ValueError(
+                "Oversized text splitter produced "
+                f"a chunk requiring approximately "
+                f"{estimated:,} estimated tokens."
+            )
+
+    return chunks
 
 
 # =========================================================
@@ -644,11 +744,13 @@ def build_indexes(
     """
 
     if not patents:
+
         raise ValueError(
             "Cannot build an index from an empty patent list."
         )
 
     if batch_size <= 0:
+
         raise ValueError(
             "batch_size must be greater than 0."
         )
@@ -750,7 +852,10 @@ def build_indexes(
                 delay > 0
                 and batch_number < len(safe_batches)
             ):
-                time.sleep(delay)
+
+                time.sleep(
+                    delay
+                )
 
     # -----------------------------------------------------
     # Validate
@@ -803,13 +908,16 @@ def build_indexes(
     print(
         "Index build complete."
     )
+
     print(
         f"Patents: {len(patents)}"
     )
+
     print(
         f"Embeddings: "
         f"{len(abstract_embeddings)}"
     )
+
     print(
         f"FAISS vectors: "
         f"{abstract_index.ntotal}"
@@ -844,17 +952,22 @@ def evaluate_query(
     Stage 2:
         Claim embeddings for Stage 1 candidates that have
         claims, followed by weighted reranking.
+
+    Oversized claims are split into chunks. Their patent-level
+    claim score is the maximum similarity across their chunks.
     """
 
     patents = index_data["patents"]
 
     if not patents:
+
         raise ValueError(
             "Cannot evaluate a query against "
             "an empty index."
         )
 
     if top_k <= 0:
+
         raise ValueError(
             "top_k must be greater than 0."
         )
@@ -864,9 +977,9 @@ def evaluate_query(
         MAX_BATCH_SIZE,
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # Query embedding
-    # -----------------------------------------------------
+    # =====================================================
 
     query_embedding = get_embedding(
         client=client,
@@ -878,9 +991,9 @@ def evaluate_query(
         query_embedding
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # Stage 1
-    # -----------------------------------------------------
+    # =====================================================
 
     top_k = min(
         top_k,
@@ -902,9 +1015,9 @@ def evaluate_query(
         stage1_indices[0]
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # Abstract scores
-    # -----------------------------------------------------
+    # =====================================================
 
     abstract_scores = np.full(
         len(patents),
@@ -916,9 +1029,9 @@ def evaluate_query(
         stage1_indices
     ] = stage1_scores
 
-    # -----------------------------------------------------
+    # =====================================================
     # Stage 2 candidates
-    # -----------------------------------------------------
+    # =====================================================
 
     stage2_candidates = [
         idx
@@ -945,26 +1058,73 @@ def evaluate_query(
             for idx in stage2_candidates
         ]
 
-        # -------------------------------------------------
+        # =================================================
+        # Expand oversized claims into chunks
+        # =================================================
+
+        expanded_claim_texts = []
+
+        expanded_claim_owners = []
+
+        for candidate_position, claim_text in enumerate(
+            claim_texts
+        ):
+
+            chunks = split_oversized_text(
+                claim_text,
+                max_tokens=OVERSIZED_TEXT_MAX_TOKENS,
+            )
+
+            if len(chunks) > 1:
+
+                patent_id = patents[
+                    stage2_candidates[
+                        candidate_position
+                    ]
+                ]["id"]
+
+                print(
+                    f"Stage 2: patent "
+                    f"{patent_id} claim split into "
+                    f"{len(chunks)} chunks"
+                )
+
+            for chunk in chunks:
+
+                expanded_claim_texts.append(
+                    chunk
+                )
+
+                expanded_claim_owners.append(
+                    candidate_position
+                )
+
+        # =================================================
         # Token-safe claim batches
-        # -------------------------------------------------
+        # =================================================
 
         safe_batches = (
             split_texts_by_token_budget(
-                claim_texts
+                expanded_claim_texts
             )
         )
 
         print(
             f"Stage 2: "
-            f"{len(claim_texts)} claims split into "
+            f"{len(claim_texts)} claims expanded to "
+            f"{len(expanded_claim_texts)} claim chunk(s), "
+            f"split into "
             f"{len(safe_batches)} "
             f"token-safe request(s)"
         )
 
+        # =================================================
+        # Embed claim chunks
+        # =================================================
+
         all_claim_embeddings = []
 
-        processed_claims = 0
+        processed_chunks = 0
 
         for batch_number, claim_batch in enumerate(
             safe_batches,
@@ -976,11 +1136,11 @@ def evaluate_query(
             )
 
             batch_start = (
-                processed_claims + 1
+                processed_chunks + 1
             )
 
             batch_end = (
-                processed_claims
+                processed_chunks
                 + batch_size_actual
             )
 
@@ -992,9 +1152,9 @@ def evaluate_query(
 
             print()
             print(
-                f"Embedding Stage 2 claims "
+                f"Embedding Stage 2 claim chunks "
                 f"{batch_start}-{batch_end} "
-                f"of {len(claim_texts)}"
+                f"of {len(expanded_claim_texts)}"
             )
 
             print(
@@ -1024,7 +1184,7 @@ def evaluate_query(
                 chunk_embeddings
             )
 
-            processed_claims = (
+            processed_chunks = (
                 batch_end
             )
 
@@ -1038,27 +1198,28 @@ def evaluate_query(
                 claims_delay > 0
                 and batch_number < len(safe_batches)
             ):
+
                 time.sleep(
                     claims_delay
                 )
 
-        # -------------------------------------------------
+        # =================================================
         # Safety check
-        # -------------------------------------------------
+        # =================================================
 
         if (
             len(all_claim_embeddings)
-            != len(stage2_candidates)
+            != len(expanded_claim_texts)
         ):
 
             raise ValueError(
-                "Claim embedding count does not match "
-                "the number of Stage 2 candidates."
+                "Claim chunk embedding count does not "
+                "match the number of claim chunks."
             )
 
-        # -------------------------------------------------
+        # =================================================
         # Normalize claim embeddings
-        # -------------------------------------------------
+        # =================================================
 
         claim_matrix = np.array(
             all_claim_embeddings,
@@ -1069,17 +1230,63 @@ def evaluate_query(
             claim_matrix
         )
 
-        # -------------------------------------------------
-        # Scores
-        # -------------------------------------------------
+        # =================================================
+        # Chunk-level similarity
+        # =================================================
 
-        for position, idx in enumerate(
+        chunk_scores = np.dot(
+            claim_matrix,
+            query_embedding[0],
+        )
+
+        # =================================================
+        # Aggregate chunk scores to patent level
+        #
+        # For normal claims:
+        #     one claim -> one chunk -> same behavior
+        #
+        # For oversized claims:
+        #     multiple chunks -> MAX similarity
+        # =================================================
+
+        candidate_chunk_positions = {}
+
+        for position, owner in enumerate(
+            expanded_claim_owners
+        ):
+
+            candidate_chunk_positions.setdefault(
+                owner,
+                [],
+            ).append(
+                position
+            )
+
+        for candidate_position, idx in enumerate(
             stage2_candidates
         ):
 
-            claim_scores[idx] = np.dot(
-                claim_matrix[position],
-                query_embedding[0],
+            positions = (
+                candidate_chunk_positions.get(
+                    candidate_position,
+                    [],
+                )
+            )
+
+            if not positions:
+
+                raise ValueError(
+                    f"No embedded claim chunks found "
+                    f"for patent {patents[idx]['id']}."
+                )
+
+            claim_score = max(
+                chunk_scores[position]
+                for position in positions
+            )
+
+            claim_scores[idx] = (
+                claim_score
             )
 
             final_scores[idx] = (
@@ -1090,9 +1297,9 @@ def evaluate_query(
                 * claim_scores[idx]
             )
 
-    # -----------------------------------------------------
+    # =====================================================
     # Stage 2 ranking
-    # -----------------------------------------------------
+    # =====================================================
 
     stage2_indices = np.array(
         sorted(
@@ -1109,6 +1316,7 @@ def evaluate_query(
         "final_scores": final_scores,
         "stage1_indices": stage1_indices,
         "stage2_indices": stage2_indices,
+        "query_embedding": query_embedding,
     }
 
 
