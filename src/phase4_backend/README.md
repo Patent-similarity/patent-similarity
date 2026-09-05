@@ -1,53 +1,58 @@
-# Phase 4 -- Backend (FastAPI)
+# Phase 4 - Backend (FastAPI)
 
-Free-text patent similarity search API. Accepts an invention description
-and returns ranked similar patents with synthesized verdicts.
+Free-text patent similarity search API. Accepts an invention description and returns ranked similar patents with synthesized verdicts.
 
 ## Status
 
-Currently backed by mock data (mock_data.py), not the real Phase 2/3
-pipeline. The response schema below is confirmed to match the partner's
-actual Phase 2 (retrieval) and Phase 3 (synthesis) output, but the data
-itself is hardcoded for now.
-
-TODO: swap get_mock_search_response() in main.py for the real
-pipeline call once Phase 2/3 exposes a callable interface.
+Backed by the real Phase 2/3 pipeline (real FAISS index, real Gemini synthesis). Verified end-to-end with real data.
 
 ## Running it
 
-    uvicorn main:app --reload
+From the repo root:
 
-Then visit http://127.0.0.1:8000/docs for interactive API docs
-(Swagger UI) -- you can test endpoints directly from the browser there.
+    uvicorn src.phase4_backend.main:app --reload
+
+Then visit http://127.0.0.1:8000/docs for interactive API docs (Swagger UI).
+
+## Architecture
+
+Job-based async pattern. A search kicks off a background job immediately; poll for the result separately. This exists because a real search takes 75-130+ seconds (real Gemini calls), so it cannot be a single blocking HTTP request.
 
 ## Endpoints
 
-- GET /health -- liveness check
-- POST /search -- main search endpoint
+- GET /health - liveness check
+- POST /search - starts a search job, returns immediately
+- GET /search/{job_id} - polls job status/result, never re-runs the pipeline
 
-### Request
+### POST /search request
 
-    {
-      "query_text": "A method for rendering 3D graphics using photon mapping techniques",
-      "top_k": 5
-    }
+    { "query": "A method for rendering 3D graphics using photon mapping techniques" }
 
-query_text must be at least 10 characters. top_k defaults to 5, max 20.
+Returns: { job_id, status: "pending" }
 
-### Response
+### GET /search/{job_id} response
 
-Results are split into two tiers:
+status is one of: pending, running, complete, failed.
 
-- full_treatment_results -- top 5 (max), Stage-2-eligible results, each
-  with a full synthesis: verdict (one of HIGH_RELEVANCE,
-  POSSIBLE_RELEVANCE, LOW_RELEVANCE, INSUFFICIENT_EVIDENCE),
-  overlap_summary, key_difference, and supporting_evidence
-  (a verbatim quote plus its source: claim or abstract).
-- additional_matches -- ranks 6-50, Stage-1-only, no synthesis --
-  just patent_id, title, score.
+On complete, result contains three separate lists:
+- stage1_candidates - all abstract-similarity hits (patent_id, title, score)
+- stage2_candidates - all claims-reranked candidates (patent_id, title, score)
+- results - the top synthesized candidates only, each with rank, patent_id, title, abstract_score, claim_score, final_score, and EITHER a synthesis object (verdict, overlap_summary, key_difference, supporting_evidence) OR an error string if that candidate's synthesis failed
+
+verdict is one of: HIGH_RELEVANCE, POSSIBLE_RELEVANCE, LOW_RELEVANCE, INSUFFICIENT_EVIDENCE
+
+Note: individual candidate synthesis failures (e.g. Gemini rate limits) do NOT fail the whole job - they show up as a per-candidate error field instead.
+
+## Startup dependencies
+
+Must exist before the server boots correctly:
+- embeddings/faiss_index/patent_similarity.faiss
+- embeddings/faiss_index/patent_similarity_metadata.json
+- data/patents.db
+- GEMINI_API_KEY set in .env
 
 ## Files
 
-- main.py -- FastAPI app, routes, CORS middleware, error handling
-- models.py -- Pydantic request/response models (the API contract)
-- mock_data.py -- placeholder data matching the confirmed real schema
+- main.py - FastAPI app, routes, CORS middleware, startup loading, error handling
+- models.py - Pydantic request/response models (the API contract)
+- job_store.py - in-memory job state (not persistent, not multi-process-safe - fine for this project's scope)
