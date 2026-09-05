@@ -20,6 +20,7 @@ from .models import (
 
 from . import job_store
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -65,7 +66,7 @@ app = FastAPI(title="Patent Similarity Search API")
 # ---------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten before deployment
+    allow_origins=os.getenv("ALLOWED_ORIGINS", "*").split(","),  # set ALLOWED_ORIGINS env var (comma-separated) before real deployment
     allow_methods=["*"],
     allow_headers=["*"],
 )

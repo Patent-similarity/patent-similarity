@@ -32,3 +32,5 @@ Edit that one file before deploying to point at the real backend
 
 ## Not yet done
 CORS is currently allow_origins=[*] in main.py - needs restricting before production
+
+Optional env var: ALLOWED_ORIGINS (comma-separated list of allowed CORS origins; defaults to * for local dev - set this to the real frontend origin before production)
