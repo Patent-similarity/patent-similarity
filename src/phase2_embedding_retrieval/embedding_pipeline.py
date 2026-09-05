@@ -292,7 +292,8 @@ def get_client():
         )
 
     return genai.Client(
-        api_key=api_key
+        api_key=api_key,
+        vertexai=False
     )
 
 
@@ -442,7 +443,7 @@ def embed_texts_with_retry(
                 raise RuntimeError(
                     f"Failed to embed "
                     f"{context_label} after "
-                    f"{max_retries} retries."
+                    f"{max_retries} retries. Original error: {error!r}"
                 ) from error
 
             server_delay = (
@@ -1375,3 +1376,7 @@ def print_ranking(
         print(
             "-" * 50
         )
+
+
+
+

@@ -1,5 +1,6 @@
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from data.toy_patents import TOY_PATENTS
 from src.phase2_embedding_retrieval.embedding_pipeline import (
     get_client,
@@ -432,23 +433,29 @@ def run_patent_similarity(
 
         return {
             "query": query,
-        "stage1_candidates": [
-            {
-                "patent_id": index_data["patents"][idx]["id"],
-                "title": index_data["patents"][idx]["title"],
-                "score": float(retrieval["abstract_scores"][idx]),
-            }
-            for idx in retrieval["stage1_indices"]
-        ],
 
-        "stage2_candidates": [
-            {
-                "patent_id": index_data["patents"][idx]["id"],
-                "title": index_data["patents"][idx]["title"],
-                "score": float(retrieval["final_scores"][idx]),
-            }
-            for idx in retrieval["stage2_indices"]
-        ],
+            "stage1_candidates": [
+                {
+                    "patent_id": index_data["patents"][idx]["id"],
+                    "title": index_data["patents"][idx]["title"],
+                    "score": float(
+                        retrieval["abstract_scores"][idx]
+                    ),
+                }
+                for idx in retrieval["stage1_indices"]
+            ],
+
+            "stage2_candidates": [
+                {
+                    "patent_id": index_data["patents"][idx]["id"],
+                    "title": index_data["patents"][idx]["title"],
+                    "score": float(
+                        retrieval["final_scores"][idx]
+                    ),
+                }
+                for idx in retrieval["stage2_indices"]
+            ],
+
             "results": [],
         }
 
@@ -503,13 +510,32 @@ def run_patent_similarity(
             rank = future_to_rank[future]
 
             try:
+
                 result = future.result()
+
             except Exception as error:
-                patent = index_data["patents"][selected_indices[rank - 1]]
+
+                # IMPORTANT:
+                # Even when Phase 3 synthesis fails, preserve
+                # the Phase 2 scores so that Phase 4 validation
+                # still succeeds.
+
+                idx = selected_indices[rank - 1]
+                patent = index_data["patents"][idx]
+
                 result = {
                     "rank": rank,
                     "patent_id": patent["id"],
                     "title": patent["title"],
+                    "abstract_score": float(
+                        retrieval["abstract_scores"][idx]
+                    ),
+                    "claim_score": float(
+                        retrieval["claim_scores"][idx]
+                    ),
+                    "final_score": float(
+                        retrieval["final_scores"][idx]
+                    ),
                     "error": str(error),
                 }
 
@@ -537,7 +563,9 @@ def run_patent_similarity(
             {
                 "patent_id": index_data["patents"][idx]["id"],
                 "title": index_data["patents"][idx]["title"],
-                "score": float(retrieval["abstract_scores"][idx]),
+                "score": float(
+                    retrieval["abstract_scores"][idx]
+                ),
             }
             for idx in retrieval["stage1_indices"]
         ],
@@ -546,7 +574,9 @@ def run_patent_similarity(
             {
                 "patent_id": index_data["patents"][idx]["id"],
                 "title": index_data["patents"][idx]["title"],
-                "score": float(retrieval["final_scores"][idx]),
+                "score": float(
+                    retrieval["final_scores"][idx]
+                ),
             }
             for idx in retrieval["stage2_indices"]
         ],

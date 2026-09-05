@@ -7,7 +7,7 @@ across workers later, swap for Redis/a database, but the interface
 
 import uuid
 from typing import Dict, Optional
-from models import JobStatus, JobStatusResponse, PipelineResult
+from .models import JobStatus, JobStatusResponse, PipelineResult
 
 _jobs: Dict[str, JobStatusResponse] = {}
 
