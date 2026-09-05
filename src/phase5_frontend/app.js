@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = BACKEND_URL;
 const POLL_INTERVAL_MS = 3000;
 
 const form = document.getElementById("search-form");
