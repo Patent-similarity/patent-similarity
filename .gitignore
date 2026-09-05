@@ -1,10 +1,9 @@
 .env
 __pycache__/
-.ipynb_checkpoints/ HEAD
+.ipynb_checkpoints/
 tempCodeRunnerFile.py
 venv/
 datasets/
- add2464d52bddb9f214467e8119f979140571961
 embeddings/full_corpus/
 checkpoint.json
 data/eval_90.faiss
