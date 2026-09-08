@@ -1,36 +1,63 @@
 # Phase 4/5 - Deployment Facts for Phase 6
 
-## Backend (Phase 4)
+## Purpose
 
-Startup command (from repo root):
+This document records the verified deployment facts for the completed Phase 4 backend and Phase 5 frontend.
+
+Phase 4 and Phase 5 are functionally integrated with the real Phase 2/3 pipeline and have been verified end-to-end using real API searches and real production artifacts.
+
+---
+
+## 1. Application Components
+
+The application consists of:
+
+### Phase 2 - Embedding + Retrieval
+
+- Gemini embedding client
+- FAISS similarity search
+- FAISS metadata
+- Real patent database
+- Two-stage retrieval:
+  - Stage 1: abstract similarity
+  - Stage 2: claims-based reranking
+
+### Phase 3 - Ranking + Synthesis
+
+- Gemini LLM synthesis
+- Candidate relevance scoring
+- Verdict generation
+- Overlap summary
+- Key difference
+- Supporting evidence
+
+### Phase 4 - Backend
+
+- FastAPI application
+- Job-based asynchronous search API
+- Search status polling
+- CORS configuration
+- Error handling
+- Startup validation
+
+### Phase 5 - Frontend
+
+- Static HTML/CSS/JavaScript interface
+- Patent search form
+- Automatic job polling
+- Elapsed-time display
+- Synthesized result rendering
+- Claims-matched candidate rendering
+- Abstract-matched candidate rendering
+- Individual synthesis error handling
+
+---
+
+## 2. Backend (Phase 4)
+
+### Startup command
+
+From the repository root:
+
+```text
 uvicorn src.phase4_backend.main:app --host 0.0.0.0 --port 8000
-(drop --host/--port for local defaults; --reload is dev-only)
-
-Port: 8000
-
-Required env var: GEMINI_API_KEY (loaded via python-dotenv)
-
-API contract:
-POST /search  { "query": "<text>" }  -> { job_id, status }
-GET /search/{job_id}  -> job status + results (see src/phase4_backend/models.py)
-GET /health  -> { status: ok }
-Full OpenAPI schema at /openapi.json once running
-
-Startup dependencies (must exist before boot):
-embeddings/faiss_index/patent_similarity.faiss
-embeddings/faiss_index/patent_similarity_metadata.json
-data/patents.db
-
-## Frontend (Phase 5)
-
-Build/start command: none - static HTML/CSS/JS, no build step
-Serve src/phase5_frontend/ as static files, or open index.html directly
-
-Frontend env vars / backend URL config:
-src/phase5_frontend/config.js sets BACKEND_URL
-Edit that one file before deploying to point at the real backend
-
-## Not yet done
-CORS is currently allow_origins=[*] in main.py - needs restricting before production
-
-Optional env var: ALLOWED_ORIGINS (comma-separated list of allowed CORS origins; defaults to * for local dev - set this to the real frontend origin before production)
