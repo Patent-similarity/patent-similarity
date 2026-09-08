@@ -46,8 +46,8 @@ Note: individual candidate synthesis failures (e.g. Gemini rate limits) do NOT f
 ## Startup dependencies
 
 Must exist before the server boots correctly:
-- embeddings/faiss_index/patent_similarity.faiss
-- embeddings/faiss_index/patent_similarity_metadata.json
+- patent_similarity.faiss
+- patent_similarity_metadata.json
 - data/patents.db
 - GEMINI_API_KEY set in .env
 
