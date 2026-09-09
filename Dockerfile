@@ -18,6 +18,6 @@ COPY data/__init__.py ./data/__init__.py
 # Copy FAISS index and metadata
 COPY embeddings/faiss_index ./embeddings/faiss_index
 
-EXPOSE 8000
+EXPOSE 10000
 
-CMD ["uvicorn", "src.phase4_backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn src.phase4_backend.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
