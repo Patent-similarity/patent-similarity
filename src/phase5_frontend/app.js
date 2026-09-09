@@ -39,7 +39,7 @@ form.addEventListener("submit", async (e) => {
 
         const data = await response.json();
         searchStartTime = Date.now();
-        showStatus("Search running -- this can take 1-2 minutes...");
+        showStatus("Search running -- this may take 10-15 minutes on the deployed server. Please keep this page open...");
         startPolling(data.job_id);
 
     } catch (err) {
