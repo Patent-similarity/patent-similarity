@@ -420,3 +420,22 @@ def health():
     return {
         "status": "ok"
     }
+
+# ---------------------------------------------------------
+# GET /ready
+# ---------------------------------------------------------
+@app.get("/ready")
+def ready():
+
+    if (
+        phase2_index is None
+        or gemini_client is None
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Application is not ready."
+        )
+
+    return {
+        "status": "ready"
+    }
