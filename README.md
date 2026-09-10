@@ -1,5 +1,9 @@
 # Patent Similarity Search
 
+[**Live Demo →**](https://patentsimilarity.onrender.com/)
+
+> **Demo note:** The deployed demo may take several minutes to complete a search because embedding generation and LLM synthesis run on the free-tier backend.
+
 A full-stack system that takes a plain-language description of an invention, retrieves technically related US patents from a real corpus, and produces an LLM-synthesized relevance judgment for each candidate — deployed end-to-end as a public web application.
 
 **Status:** **Phases 1–6 complete.** The core retrieval and synthesis pipeline is frozen, validated on real data, deployed, and confirmed working end-to-end in production on Render.
@@ -9,7 +13,7 @@ A full-stack system that takes a plain-language description of an invention, ret
 ## 1. What it does
 
 1. A user enters a free-text invention description.
-2. The system embeds the query and retrieves technically related patents from a corpus of **6,980 US patents** (CPC subclass **G06T** — image data processing / computer vision, filed 2015–2025).
+2. The system embeds the query and retrieves technically related patents from an initial corpus of **6,980 US patents**, filtered to **6,779 patents** for the retrieval pipeline (CPC subclass **G06T** — image data processing / computer vision, filed 2015–2025).
 3. Candidates are reranked using their claims text for stronger, invention-specific evidence.
 4. The top candidates are passed to an LLM, which returns a structured verdict (`HIGH_RELEVANCE` / `POSSIBLE_RELEVANCE` / `LOW_RELEVANCE` / `INSUFFICIENT_EVIDENCE`), an overlap summary, a key difference, and a verbatim, mechanically verified supporting quote from the patent's own text.
 5. Results are served asynchronously through a job-based API and rendered in a web frontend that polls for completion.
@@ -54,13 +58,13 @@ The layered design is deliberate: embedding similarity is treated as a **retriev
 
 The project was developed collaboratively, with responsibilities divided across the system's development phases.
 
-### [Swayam Surve]
+### Swayam Surve
 
 * **Phase 2 — Embedding + Retrieval:** Implemented the Gemini embedding pipeline, FAISS-based retrieval, and claims-aware reranking. Conducted retrieval evaluation and finalized the retrieval configuration.
 * **Phase 3 — Ranking + Synthesis:** Implemented the LLM-based structured synthesis layer, relevance verdicts, evidence extraction/validation, and candidate-level failure handling.
 * **Phase 6 — Deployment:** Deployed the backend/frontend workflow to Render and performed end-to-end production verification.
 
-### [Ayush Shirke]
+### Ayush Shirke
 
 * **Phase 1 — Data Pipeline:** Built the patent corpus pipeline, including data collection, cleaning, structuring, provenance, and claims/abstract availability tracking.
 * **Phase 4 — Backend/API:** Implemented the FastAPI service, asynchronous job lifecycle, API endpoints, health/readiness checks, and backend integration.
