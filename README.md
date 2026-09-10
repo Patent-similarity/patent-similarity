@@ -1,6 +1,6 @@
 # Patent Similarity Search
 
-[**Live Demo →**](https://patentsimilarity.onrender.com/)
+[**Live Demo →**](https://patent-similarity.onrender.com/)
 
 > **Demo note:** The deployed demo may take several minutes to complete a search because embedding generation and LLM synthesis run on the free-tier backend.
 
